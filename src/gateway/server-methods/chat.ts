@@ -10,6 +10,8 @@ import type { MsgContext } from "../../auto-reply/templating.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../../auto-reply/tokens.js";
 import { createReplyPrefixOptions } from "../../channels/reply-prefix.js";
 import { resolveSessionFilePath } from "../../config/sessions.js";
+import { isSessionArchiveArtifactName } from "../../config/sessions/artifacts.js";
+import { resolveSessionTranscriptsDirForAgent } from "../../config/sessions/paths.js";
 import { jsonUtf8Bytes } from "../../infra/json-utf8-bytes.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
 import { parseAgentSessionKey } from "../../sessions/session-key-utils.js";
@@ -610,9 +612,36 @@ export const chatHandlers: GatewayRequestHandlers = {
       limit?: number;
     };
     const { cfg, storePath, entry } = loadSessionEntry(sessionKey);
-    const sessionId = entry?.sessionId;
-    const rawMessages =
+    let sessionId = entry?.sessionId;
+    let rawMessages =
       sessionId && storePath ? readSessionMessages(sessionId, storePath, entry?.sessionFile) : [];
+    if (rawMessages.length === 0 && !entry) {
+      const parsed = parseAgentSessionKey(sessionKey);
+      if (parsed) {
+        const rawKey = (sessionKey ?? "").trim();
+        const restRaw = rawKey.toLowerCase().startsWith("agent:")
+          ? rawKey.slice(rawKey.indexOf(":", 6) + 1).trim()
+          : (parsed.rest?.trim() ?? "");
+        const archiveSessionId = restRaw && path.basename(restRaw) === restRaw ? restRaw : null;
+        if (
+          archiveSessionId &&
+          isSessionArchiveArtifactName(archiveSessionId) &&
+          !archiveSessionId.includes("..")
+        ) {
+          try {
+            const agentId = parsed.agentId ? String(parsed.agentId).trim() : "main";
+            const dir = resolveSessionTranscriptsDirForAgent(agentId);
+            const filePath = path.join(dir, archiveSessionId);
+            if (fs.existsSync(filePath)) {
+              rawMessages = readSessionMessages(archiveSessionId, undefined, filePath);
+              sessionId = archiveSessionId;
+            }
+          } catch {
+            // fallback: keep rawMessages empty
+          }
+        }
+      }
+    }
     const hardMax = 1000;
     const defaultLimit = 200;
     const requested = typeof limit === "number" ? limit : defaultLimit;

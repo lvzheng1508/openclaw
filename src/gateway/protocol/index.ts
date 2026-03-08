@@ -190,6 +190,16 @@ import {
   SessionsResetParamsSchema,
   type SessionsResolveParams,
   SessionsResolveParamsSchema,
+  type SessionHistoryListParams,
+  SessionHistoryListParamsSchema,
+  type SessionHistoryGetParams,
+  SessionHistoryGetParamsSchema,
+  type SessionHistoryImportParams,
+  SessionHistoryImportParamsSchema,
+  type SessionHistoryExportParams,
+  SessionHistoryExportParamsSchema,
+  type SessionHistoryReindexParams,
+  SessionHistoryReindexParamsSchema,
   type SessionsUsageParams,
   SessionsUsageParamsSchema,
   type ShutdownEvent,
@@ -317,6 +327,21 @@ export const validateSessionsCompactParams = ajv.compile<SessionsCompactParams>(
 );
 export const validateSessionsUsageParams =
   ajv.compile<SessionsUsageParams>(SessionsUsageParamsSchema);
+export const validateSessionHistoryListParams = ajv.compile<SessionHistoryListParams>(
+  SessionHistoryListParamsSchema,
+);
+export const validateSessionHistoryGetParams = ajv.compile<SessionHistoryGetParams>(
+  SessionHistoryGetParamsSchema,
+);
+export const validateSessionHistoryImportParams = ajv.compile<SessionHistoryImportParams>(
+  SessionHistoryImportParamsSchema,
+);
+export const validateSessionHistoryExportParams = ajv.compile<SessionHistoryExportParams>(
+  SessionHistoryExportParamsSchema,
+);
+export const validateSessionHistoryReindexParams = ajv.compile<SessionHistoryReindexParams>(
+  SessionHistoryReindexParamsSchema,
+);
 export const validateConfigGetParams = ajv.compile<ConfigGetParams>(ConfigGetParamsSchema);
 export const validateConfigSetParams = ajv.compile<ConfigSetParams>(ConfigSetParamsSchema);
 export const validateConfigApplyParams = ajv.compile<ConfigApplyParams>(ConfigApplyParamsSchema);

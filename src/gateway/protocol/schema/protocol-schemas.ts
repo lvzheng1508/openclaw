@@ -133,6 +133,11 @@ import {
   SecretsResolveResultSchema,
 } from "./secrets.js";
 import {
+  SessionHistoryExportParamsSchema,
+  SessionHistoryGetParamsSchema,
+  SessionHistoryImportParamsSchema,
+  SessionHistoryListParamsSchema,
+  SessionHistoryReindexParamsSchema,
   SessionsCompactParamsSchema,
   SessionsDeleteParamsSchema,
   SessionsListParamsSchema,
@@ -197,6 +202,11 @@ export const ProtocolSchemas = {
   SessionsPatchParams: SessionsPatchParamsSchema,
   SessionsResetParams: SessionsResetParamsSchema,
   SessionsDeleteParams: SessionsDeleteParamsSchema,
+  SessionHistoryListParams: SessionHistoryListParamsSchema,
+  SessionHistoryGetParams: SessionHistoryGetParamsSchema,
+  SessionHistoryImportParams: SessionHistoryImportParamsSchema,
+  SessionHistoryExportParams: SessionHistoryExportParamsSchema,
+  SessionHistoryReindexParams: SessionHistoryReindexParamsSchema,
   SessionsCompactParams: SessionsCompactParamsSchema,
   SessionsUsageParams: SessionsUsageParamsSchema,
   ConfigGetParams: ConfigGetParamsSchema,

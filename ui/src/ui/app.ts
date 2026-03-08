@@ -57,6 +57,10 @@ import type { CronFieldErrors } from "./controllers/cron.ts";
 import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+import type {
+  HistorySessionDetail,
+  SessionManagementListItem,
+} from "./controllers/session-management.ts";
 import type { SkillMessage } from "./controllers/skills.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
@@ -248,6 +252,23 @@ export class OpenClawApp extends LitElement {
   @state() sessionsIncludeGlobal = true;
   @state() sessionsIncludeUnknown = false;
   @state() sessionsHideCron = true;
+  @state() sessionManagementLoading = false;
+  @state() sessionManagementError: string | null = null;
+  @state() sessionManagementAgentId: string | null = null;
+  @state() sessionManagementItems: SessionManagementListItem[] = [];
+  @state() sessionManagementTotal = 0;
+  @state() sessionManagementPage = 1;
+  @state() sessionManagementPageSize = 50;
+  @state() sessionManagementStartDate = "";
+  @state() sessionManagementEndDate = "";
+  @state() sessionManagementSelectedIds: string[] = [];
+  @state() sessionManagementActionBusy = false;
+  @state() sessionManagementConflictPolicy: "skip" | "overwrite" = "skip";
+  @state() historySessionAgentId: string | null = null;
+  @state() historySessionId: string | null = null;
+  @state() historySessionLoading = false;
+  @state() historySessionError: string | null = null;
+  @state() historySessionDetail: HistorySessionDetail | null = null;
 
   @state() usageLoading = false;
   @state() usageResult: import("./types.js").SessionsUsageResult | null = null;

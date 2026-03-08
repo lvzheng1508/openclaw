@@ -24,6 +24,12 @@ import { loadExecApprovals } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
+import {
+  loadHistorySessionDetail,
+  loadHistorySessionShell,
+  loadSessionHistoryList,
+  loadSessionManagementShell,
+} from "./controllers/session-management.ts";
 import { loadSessions } from "./controllers/sessions.ts";
 import { loadSkills } from "./controllers/skills.ts";
 import {
@@ -178,6 +184,16 @@ export async function refreshActiveTab(host: SettingsHost) {
   }
   if (host.tab === "sessions") {
     await loadSessions(host as unknown as OpenClawApp);
+  }
+  if (host.tab === "sessionManagement") {
+    await loadAgents(host as unknown as OpenClawApp);
+    await loadSessionManagementShell(host as unknown as OpenClawApp);
+    await loadSessionHistoryList(host as unknown as OpenClawApp);
+  }
+  if (host.tab === "historySession") {
+    await loadAgents(host as unknown as OpenClawApp);
+    await loadHistorySessionShell(host as unknown as OpenClawApp);
+    await loadHistorySessionDetail(host as unknown as OpenClawApp);
   }
   if (host.tab === "cron") {
     await loadCron(host);

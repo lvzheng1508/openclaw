@@ -69,6 +69,132 @@
   line-height: 1.5;
 }
 
+/* Session Management card header */
+.session-mgmt-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.session-mgmt-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.session-mgmt-conflict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.session-mgmt-conflict select {
+  border: 1px solid var(--input);
+  background: var(--card);
+  border-radius: var(--radius-md);
+  padding: 8px 32px 8px 12px;
+  font-size: 13px;
+  color: var(--text-strong);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+}
+
+.session-mgmt-conflict select:focus {
+  outline: none;
+  border-color: var(--ring);
+}
+
+.session-mgmt-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.session-mgmt-table th,
+.session-mgmt-table td {
+  padding: 10px 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border);
+}
+
+.session-mgmt-table th {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  text-align: inherit;
+}
+
+.session-mgmt-table tbody tr {
+  background: var(--card);
+  transition: background var(--duration-fast) ease;
+}
+
+.session-mgmt-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
+.session-mgmt-col-check {
+  width: 2.5em;
+  text-align: center;
+}
+
+.session-mgmt-col-index {
+  width: 2.5em;
+  text-align: center;
+}
+
+.session-mgmt-col-time {
+  width: 16em;
+  text-align: center;
+}
+
+.session-mgmt-table th.session-mgmt-col-time {
+  text-align: center;
+}
+
+.session-mgmt-table td.session-mgmt-col-time {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.session-mgmt-col-id {
+  width: 280px;
+  max-width: 280px;
+  min-width: 0;
+  text-align: center;
+}
+
+.session-mgmt-table th.session-mgmt-col-id,
+.session-mgmt-table td.session-mgmt-col-id {
+  text-align: center;
+}
+
+.session-mgmt-col-id .session-link {
+  word-break: break-all;
+}
+
+.session-mgmt-col-actions {
+  width: 1%;
+  white-space: nowrap;
+  text-align: center;
+}
+
+.session-mgmt-table th.session-mgmt-col-actions,
+.session-mgmt-table td.session-mgmt-col-actions {
+  text-align: center;
+}
+
+.session-mgmt-table td.session-mgmt-col-actions > * {
+  margin: 0 4px;
+}
+
 /* ===========================================
    Stats - Bold values, subtle labels
    =========================================== */

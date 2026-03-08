@@ -4,6 +4,10 @@ import type { CronModelSuggestionsState, CronState } from "./controllers/cron.ts
 import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
+import type {
+  HistorySessionDetail,
+  SessionManagementListItem,
+} from "./controllers/session-management.ts";
 import type { SkillMessage } from "./controllers/skills.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
@@ -154,6 +158,23 @@ export type AppViewState = {
   sessionsIncludeGlobal: boolean;
   sessionsIncludeUnknown: boolean;
   sessionsHideCron: boolean;
+  sessionManagementLoading: boolean;
+  sessionManagementError: string | null;
+  sessionManagementAgentId: string | null;
+  sessionManagementItems: SessionManagementListItem[];
+  sessionManagementTotal: number;
+  sessionManagementPage: number;
+  sessionManagementPageSize: number;
+  sessionManagementStartDate: string;
+  sessionManagementEndDate: string;
+  sessionManagementSelectedIds: string[];
+  sessionManagementActionBusy: boolean;
+  sessionManagementConflictPolicy: "skip" | "overwrite";
+  historySessionAgentId: string | null;
+  historySessionId: string | null;
+  historySessionLoading: boolean;
+  historySessionError: string | null;
+  historySessionDetail: HistorySessionDetail | null;
   usageLoading: boolean;
   usageResult: SessionsUsageResult | null;
   usageCostSummary: CostUsageSummary | null;

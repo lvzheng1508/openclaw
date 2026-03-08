@@ -4,6 +4,7 @@ import { t } from "../i18n/index.ts";
 import { refreshChatAvatar } from "./app-chat.ts";
 import { renderUsageTab } from "./app-render-usage-tab.ts";
 import { renderChatControls, renderTab, renderThemeToggle } from "./app-render.helpers.ts";
+import { setTab } from "./app-settings.ts";
 import type { AppViewState } from "./app-view-state.ts";
 import { loadAgentFileContent, loadAgentFiles, saveAgentFile } from "./controllers/agent-files.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
@@ -55,6 +56,12 @@ import {
 import { loadLogs } from "./controllers/logs.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
+import {
+  loadSessionHistoryList,
+  importSessionHistory,
+  exportSessionHistory,
+  rebuildSessionIndex,
+} from "./controllers/session-management.ts";
 import { deleteSessionAndRefresh, loadSessions, patchSession } from "./controllers/sessions.ts";
 import {
   installSkill,
@@ -75,10 +82,12 @@ import { renderCron } from "./views/cron.ts";
 import { renderDebug } from "./views/debug.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
+import { renderHistorySession } from "./views/history-session.ts";
 import { renderInstances } from "./views/instances.ts";
 import { renderLogs } from "./views/logs.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOverview } from "./views/overview.ts";
+import { renderSessionManagement } from "./views/session-management.ts";
 import { renderSessions } from "./views/sessions.ts";
 import { renderSkills } from "./views/skills.ts";
 
@@ -434,6 +443,112 @@ export function renderApp(state: AppViewState) {
                 onRefresh: () => loadSessions(state),
                 onPatch: (key, patch) => patchSession(state, key, patch),
                 onDelete: (key) => deleteSessionAndRefresh(state, key),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "sessionManagement"
+            ? renderSessionManagement({
+                loading: state.sessionManagementLoading,
+                error: state.sessionManagementError,
+                connected: state.connected,
+                agentsList: state.agentsList,
+                selectedAgentId: state.sessionManagementAgentId,
+                items: state.sessionManagementItems,
+                total: state.sessionManagementTotal,
+                page: state.sessionManagementPage,
+                pageSize: state.sessionManagementPageSize,
+                startDate: state.sessionManagementStartDate,
+                endDate: state.sessionManagementEndDate,
+                basePath: state.basePath,
+                selectedIds: state.sessionManagementSelectedIds,
+                conflictPolicy: state.sessionManagementConflictPolicy,
+                actionBusy: state.sessionManagementActionBusy,
+                onAgentChange: (agentId) => {
+                  state.sessionManagementAgentId = agentId;
+                  if (!state.historySessionAgentId) {
+                    state.historySessionAgentId = agentId;
+                  }
+                },
+                onStartDateChange: (value) => {
+                  state.sessionManagementStartDate = value;
+                },
+                onEndDateChange: (value) => {
+                  state.sessionManagementEndDate = value;
+                },
+                onRefresh: () => loadSessionHistoryList(state),
+                onPageChange: (page) => {
+                  state.sessionManagementPage = page;
+                  void loadSessionHistoryList(state);
+                },
+                onViewHistory: (agentId, sessionId) => {
+                  state.historySessionAgentId = agentId;
+                  state.historySessionId = sessionId;
+                  setTab(state as unknown as Parameters<typeof setTab>[0], "historySession");
+                },
+                onSwitchToChat: (agentId, sessionId) => {
+                  const sessionKey = `agent:${agentId}:${sessionId}`;
+                  state.sessionKey = sessionKey;
+                  void loadChatHistory(state).then(() =>
+                    setTab(state as unknown as Parameters<typeof setTab>[0], "chat"),
+                  );
+                },
+                onSelectionToggle: (sessionId) => {
+                  const ids = state.sessionManagementSelectedIds;
+                  if (ids.includes(sessionId)) {
+                    state.sessionManagementSelectedIds = ids.filter((id) => id !== sessionId);
+                  } else {
+                    state.sessionManagementSelectedIds = [...ids, sessionId];
+                  }
+                },
+                onSelectAll: () => {
+                  const ids = state.sessionManagementItems.map((r) => r.sessionId);
+                  state.sessionManagementSelectedIds = [
+                    ...new Set([...state.sessionManagementSelectedIds, ...ids]),
+                  ];
+                },
+                onClearSelection: () => {
+                  state.sessionManagementSelectedIds = [];
+                },
+                onConflictPolicyChange: (value) => {
+                  state.sessionManagementConflictPolicy = value;
+                },
+                onImport: () =>
+                  void importSessionHistory(state, state.sessionManagementConflictPolicy).then(() =>
+                    loadSessionHistoryList(state),
+                  ),
+                onExport: () =>
+                  void exportSessionHistory(state, state.sessionManagementSelectedIds),
+                onRebuildIndex: () =>
+                  void rebuildSessionIndex(state).then(() => loadSessionHistoryList(state)),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "historySession"
+            ? renderHistorySession({
+                loading: state.historySessionLoading,
+                error: state.historySessionError,
+                agentId: state.historySessionAgentId,
+                sessionId: state.historySessionId,
+                transcript: state.historySessionDetail?.transcript ?? [],
+                basePath: state.basePath,
+                onBack: () =>
+                  setTab(state as unknown as Parameters<typeof setTab>[0], "sessionManagement"),
+                onSwitchToChat: () => {
+                  const agentId = state.historySessionAgentId ?? "main";
+                  const sessionId = state.historySessionId ?? "";
+                  if (!sessionId) {
+                    return;
+                  }
+                  const sessionKey = `agent:${agentId}:${sessionId}`;
+                  state.sessionKey = sessionKey;
+                  void loadChatHistory(state).then(() =>
+                    setTab(state as unknown as Parameters<typeof setTab>[0], "chat"),
+                  );
+                },
               })
             : nothing
         }
