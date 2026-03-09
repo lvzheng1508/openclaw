@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
 import { resolveCronStyleNow } from "../../agents/current-time.js";
 import { resolveUserTimezone } from "../../agents/date-time.js";
@@ -52,6 +53,34 @@ function formatDateStamp(nowMs: number, timezone: string): string {
     return `${year}-${month}-${day}`;
   }
   return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+/** Ensure workspace MEMORY.md, memory/ dir, and memory/YYYY-MM-DD.md for today and yesterday exist so read-tool does not ENOENT. */
+async function ensureMemoryFilesForContext(
+  workspaceDir: string,
+  dateStamp: string,
+  yesterdayStamp: string,
+): Promise<void> {
+  const rootMemoryPath = path.join(workspaceDir, "MEMORY.md");
+  try {
+    await fsp.writeFile(rootMemoryPath, "", { flag: "wx" });
+  } catch {
+    // Already exists or other error; ignore.
+  }
+  const memoryDir = path.join(workspaceDir, "memory");
+  try {
+    await fsp.mkdir(memoryDir, { recursive: true });
+  } catch {
+    return;
+  }
+  for (const d of [dateStamp, yesterdayStamp]) {
+    const filePath = path.join(memoryDir, `${d}.md`);
+    try {
+      await fsp.writeFile(filePath, "", { flag: "wx" });
+    } catch {
+      // File already exists or other error; ignore.
+    }
+  }
 }
 
 /**
@@ -120,6 +149,8 @@ export async function readPostCompactionContext(
     const resolvedNowMs = nowMs ?? Date.now();
     const timezone = resolveUserTimezone(cfg?.agents?.defaults?.userTimezone);
     const dateStamp = formatDateStamp(resolvedNowMs, timezone);
+    const yesterdayStamp = formatDateStamp(resolvedNowMs - 86400 * 1000, timezone);
+    await ensureMemoryFilesForContext(workspaceDir, dateStamp, yesterdayStamp);
     // Always append the real runtime timestamp — AGENTS.md content may itself contain
     // "Current time:" as user-authored text, so we must not gate on that substring.
     const { timeLine } = resolveCronStyleNow(cfg ?? {}, resolvedNowMs);
