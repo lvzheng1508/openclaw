@@ -64,6 +64,8 @@ function resolveWatchPaths(workspaceDir: string, config?: OpenClawConfig): strin
   }
   paths.push(path.join(CONFIG_DIR, "skills"));
   paths.push(path.join(os.homedir(), ".agents", "skills"));
+  // Watch ~/.claude/skills for Claude Code compatible skills
+  paths.push(path.join(os.homedir(), ".claude", "skills"));
   const extraDirsRaw = config?.skills?.load?.extraDirs ?? [];
   const extraDirs = extraDirsRaw
     .map((d) => (typeof d === "string" ? d.trim() : ""))

@@ -455,6 +455,18 @@ function loadSkillEntries(
   });
   const mergedExtraDirs = [...extraDirs, ...pluginSkillDirs];
 
+  // ~/.claude/skills: Claude Code compatible skill directory, lowest precedence
+  const claudeSkillsDir = path.join(os.homedir(), ".claude", "skills");
+  skillsLogger.debug("Loading Claude Code compatible skills.", { dir: claudeSkillsDir });
+  const claudeSkills = loadSkills({
+    dir: claudeSkillsDir,
+    source: "openclaw-extra",
+  });
+  skillsLogger.debug("Loaded Claude Code compatible skills.", {
+    dir: claudeSkillsDir,
+    count: claudeSkills.length,
+    names: claudeSkills.map((s) => s.name),
+  });
   const bundledSkills = bundledSkillsDir
     ? loadSkills({
         dir: bundledSkillsDir,
@@ -488,7 +500,10 @@ function loadSkillEntries(
   });
 
   const merged = new Map<string, Skill>();
-  // Precedence: extra < bundled < managed < agents-skills-personal < agents-skills-project < workspace
+  // Precedence: claude < extra < bundled < managed < agents-skills-personal < agents-skills-project < workspace
+  for (const skill of claudeSkills) {
+    merged.set(skill.name, skill);
+  }
   for (const skill of extraSkills) {
     merged.set(skill.name, skill);
   }
@@ -569,6 +584,15 @@ export function buildWorkspaceSkillSnapshot(
   opts?: WorkspaceSkillBuildOptions & { snapshotVersion?: number },
 ): SkillSnapshot {
   const { eligible, prompt, resolvedSkills } = resolveWorkspaceSkillPromptState(workspaceDir, opts);
+  skillsLogger.info("Built skills snapshot.", {
+    workspaceDir,
+    skillCount: eligible.length,
+    skills: eligible.map((e) => ({
+      name: e.skill.name,
+      source: e.skill.source,
+      path: e.skill.filePath,
+    })),
+  });
   const skillFilter = normalizeSkillFilter(opts?.skillFilter);
   return {
     prompt,
