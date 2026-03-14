@@ -50,7 +50,7 @@ export const sessionHistoryHandlers: GatewayRequestHandlers = {
     let dir: string;
     try {
       dir = resolveSessionTranscriptsDirForAgent(agentId);
-    } catch {
+    } catch (err) {
       respond(
         false,
         undefined,
@@ -121,7 +121,7 @@ export const sessionHistoryHandlers: GatewayRequestHandlers = {
     let dir: string;
     try {
       dir = resolveSessionTranscriptsDirForAgent(agentId);
-    } catch {
+    } catch (err) {
       respond(
         false,
         undefined,
@@ -184,7 +184,7 @@ export const sessionHistoryHandlers: GatewayRequestHandlers = {
     let dir: string;
     try {
       dir = resolveSessionTranscriptsDirForAgent(agentId);
-    } catch {
+    } catch (err) {
       respond(
         false,
         undefined,
@@ -234,7 +234,7 @@ export const sessionHistoryHandlers: GatewayRequestHandlers = {
     let dir: string;
     try {
       dir = resolveSessionTranscriptsDirForAgent(agentId);
-    } catch {
+    } catch (err) {
       respond(
         false,
         undefined,

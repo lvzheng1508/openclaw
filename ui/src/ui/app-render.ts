@@ -98,6 +98,7 @@ import { renderCommandPalette } from "./views/command-palette.ts";
 import { renderConfig } from "./views/config.ts";
 import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
+import { renderHistorySession } from "./views/history-session.ts";
 import { renderLoginGate } from "./views/login-gate.ts";
 import { renderOverview } from "./views/overview.ts";
 import { renderSessionManagement } from "./views/session-management.ts";
@@ -806,14 +807,12 @@ export function renderApp(state: AppViewState) {
                 onViewHistory: (agentId, sessionId) => {
                   state.historySessionAgentId = agentId;
                   state.historySessionId = sessionId;
-                  setTab(state as unknown as Parameters<typeof setTab>[0], "historySession");
+                  state.setTab("historySession");
                 },
                 onSwitchToChat: (agentId, sessionId) => {
                   const sessionKey = `agent:${agentId}:${sessionId}`;
                   state.sessionKey = sessionKey;
-                  void loadChatHistory(state).then(() =>
-                    setTab(state as unknown as Parameters<typeof setTab>[0], "chat"),
-                  );
+                  void loadChatHistory(state).then(() => state.setTab("chat"));
                 },
                 onSelectionToggle: (sessionId) => {
                   const ids = state.sessionManagementSelectedIds;
@@ -856,8 +855,7 @@ export function renderApp(state: AppViewState) {
                 sessionId: state.historySessionId,
                 transcript: state.historySessionDetail?.transcript ?? [],
                 basePath: state.basePath,
-                onBack: () =>
-                  setTab(state as unknown as Parameters<typeof setTab>[0], "sessionManagement"),
+                onBack: () => state.setTab("sessionManagement"),
                 onSwitchToChat: () => {
                   const agentId = state.historySessionAgentId ?? "main";
                   const sessionId = state.historySessionId ?? "";
@@ -866,9 +864,7 @@ export function renderApp(state: AppViewState) {
                   }
                   const sessionKey = `agent:${agentId}:${sessionId}`;
                   state.sessionKey = sessionKey;
-                  void loadChatHistory(state).then(() =>
-                    setTab(state as unknown as Parameters<typeof setTab>[0], "chat"),
-                  );
+                  void loadChatHistory(state).then(() => state.setTab("chat"));
                 },
               })
             : nothing

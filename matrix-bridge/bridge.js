@@ -41,8 +41,12 @@ bot.on("login", (user) => {
 
 bot.on("message", async (msg) => {
   // Filter out self-messages and system messages
-  if (msg.self()) return;
-  if (msg.type() !== bot.Message.Type.Text) return; // Currently only robustly support text
+  if (msg.self()) {
+    return;
+  }
+  if (msg.type() !== bot.Message.Type.Text) {
+    return; // Currently only robustly support text
+  }
 
   const contact = msg.talker();
   const room = msg.room();
@@ -116,7 +120,7 @@ app.post("/send", async (req, res) => {
 });
 
 // Start services
-(async () => {
+void (async () => {
   await bot.start();
   app.listen(CONFIG.BRIDGE_PORT, () => {
     console.log(`Bridge Server listening on port ${CONFIG.BRIDGE_PORT}`);

@@ -4,10 +4,7 @@ import type { CronModelSuggestionsState, CronState } from "./controllers/cron.ts
 import type { DevicePairingList } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import type { ExecApprovalsFile, ExecApprovalsSnapshot } from "./controllers/exec-approvals.ts";
-import type {
-  HistorySessionDetail,
-  SessionManagementListItem,
-} from "./controllers/session-management.ts";
+import type { SessionManagementState } from "./controllers/session-management.ts";
 import type { SkillMessage } from "./controllers/skills.ts";
 import type { GatewayBrowserClient, GatewayHelloOk } from "./gateway.ts";
 import type { Tab } from "./navigation.ts";
@@ -231,40 +228,60 @@ export type AppViewState = {
   usageLogFilterHasTools: boolean;
   usageLogFilterQuery: string;
 } & Pick<
-  CronState,
-  | "cronLoading"
-  | "cronJobsLoadingMore"
-  | "cronJobs"
-  | "cronJobsTotal"
-  | "cronJobsHasMore"
-  | "cronJobsNextOffset"
-  | "cronJobsLimit"
-  | "cronJobsQuery"
-  | "cronJobsEnabledFilter"
-  | "cronJobsScheduleKindFilter"
-  | "cronJobsLastStatusFilter"
-  | "cronJobsSortBy"
-  | "cronJobsSortDir"
-  | "cronStatus"
-  | "cronError"
-  | "cronForm"
-  | "cronFieldErrors"
-  | "cronEditingJobId"
-  | "cronRunsJobId"
-  | "cronRunsLoadingMore"
-  | "cronRuns"
-  | "cronRunsTotal"
-  | "cronRunsHasMore"
-  | "cronRunsNextOffset"
-  | "cronRunsLimit"
-  | "cronRunsScope"
-  | "cronRunsStatuses"
-  | "cronRunsDeliveryStatuses"
-  | "cronRunsStatusFilter"
-  | "cronRunsQuery"
-  | "cronRunsSortDir"
-  | "cronBusy"
+  SessionManagementState,
+  | "sessionManagementLoading"
+  | "sessionManagementError"
+  | "sessionManagementAgentId"
+  | "sessionManagementItems"
+  | "sessionManagementTotal"
+  | "sessionManagementPage"
+  | "sessionManagementPageSize"
+  | "sessionManagementStartDate"
+  | "sessionManagementEndDate"
+  | "sessionManagementSelectedIds"
+  | "sessionManagementActionBusy"
+  | "sessionManagementConflictPolicy"
+  | "historySessionAgentId"
+  | "historySessionId"
+  | "historySessionLoading"
+  | "historySessionError"
+  | "historySessionDetail"
 > &
+  Pick<
+    CronState,
+    | "cronLoading"
+    | "cronJobsLoadingMore"
+    | "cronJobs"
+    | "cronJobsTotal"
+    | "cronJobsHasMore"
+    | "cronJobsNextOffset"
+    | "cronJobsLimit"
+    | "cronJobsQuery"
+    | "cronJobsEnabledFilter"
+    | "cronJobsScheduleKindFilter"
+    | "cronJobsLastStatusFilter"
+    | "cronJobsSortBy"
+    | "cronJobsSortDir"
+    | "cronStatus"
+    | "cronError"
+    | "cronForm"
+    | "cronFieldErrors"
+    | "cronEditingJobId"
+    | "cronRunsJobId"
+    | "cronRunsLoadingMore"
+    | "cronRuns"
+    | "cronRunsTotal"
+    | "cronRunsHasMore"
+    | "cronRunsNextOffset"
+    | "cronRunsLimit"
+    | "cronRunsScope"
+    | "cronRunsStatuses"
+    | "cronRunsDeliveryStatuses"
+    | "cronRunsStatusFilter"
+    | "cronRunsQuery"
+    | "cronRunsSortDir"
+    | "cronBusy"
+  > &
   Pick<CronModelSuggestionsState, "cronModelSuggestions"> & {
     skillsLoading: boolean;
     skillsReport: SkillStatusReport | null;
