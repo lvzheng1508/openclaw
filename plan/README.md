@@ -12,3 +12,4 @@ Rules for this folder:
 Current focus:
 
 - Session management for local runtime transcripts in the Control UI.
+- Merge-from-upstream and clean-build verification standardization.
