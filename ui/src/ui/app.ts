@@ -290,6 +290,24 @@ export class OpenClawApp extends LitElement {
   @state() sessionsPageSize = 10;
   @state() sessionsActionsOpenKey: string | null = null;
 
+  @state() sessionManagementLoading = false;
+  @state() sessionManagementError: string | null = null;
+  @state() sessionManagementAgentId: string | null = null;
+  @state() sessionManagementItems: SessionManagementListItem[] = [];
+  @state() sessionManagementTotal = 0;
+  @state() sessionManagementPage = 1;
+  @state() sessionManagementPageSize = 50;
+  @state() sessionManagementStartDate = "";
+  @state() sessionManagementEndDate = "";
+  @state() sessionManagementSelectedIds: string[] = [];
+  @state() sessionManagementConflictPolicy: "skip" | "overwrite" = "skip";
+  @state() sessionManagementActionBusy = false;
+  @state() historySessionAgentId: string | null = null;
+  @state() historySessionId: string | null = null;
+  @state() historySessionLoading = false;
+  @state() historySessionError: string | null = null;
+  @state() historySessionDetail: HistorySessionDetail | null = null;
+
   @state() usageLoading = false;
   @state() usageResult: import("./types.js").SessionsUsageResult | null = null;
   @state() usageCostSummary: import("./types.js").CostUsageSummary | null = null;

@@ -43,6 +43,8 @@ export type SessionManagementState = {
   historySessionDetail: HistorySessionDetail | null;
 };
 
+const DEFAULT_AGENT_ID = "main";
+
 function resolveDefaultAgentId(agentsList: AgentsListResult | null): string | null {
   return agentsList?.defaultId ?? agentsList?.agents?.[0]?.id ?? null;
 }
@@ -50,7 +52,7 @@ function resolveDefaultAgentId(agentsList: AgentsListResult | null): string | nu
 export async function loadSessionManagementShell(state: SessionManagementState) {
   state.sessionManagementError = null;
   if (!state.sessionManagementAgentId) {
-    state.sessionManagementAgentId = resolveDefaultAgentId(state.agentsList);
+    state.sessionManagementAgentId = resolveDefaultAgentId(state.agentsList) ?? DEFAULT_AGENT_ID;
   }
   if (!state.historySessionAgentId) {
     state.historySessionAgentId = state.sessionManagementAgentId;
@@ -64,10 +66,8 @@ export async function loadSessionHistoryList(state: SessionManagementState) {
   if (state.sessionManagementLoading) {
     return;
   }
-  const agentId = state.sessionManagementAgentId ?? resolveDefaultAgentId(state.agentsList);
-  if (!agentId) {
-    return;
-  }
+  const agentId =
+    state.sessionManagementAgentId ?? resolveDefaultAgentId(state.agentsList) ?? DEFAULT_AGENT_ID;
   state.sessionManagementLoading = true;
   state.sessionManagementError = null;
   try {
