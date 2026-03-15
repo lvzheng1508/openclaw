@@ -72,6 +72,8 @@ import {
   importSessionHistory,
   exportSessionHistory,
   rebuildSessionIndex,
+  deleteSessionHistory,
+  generateSessionSummary,
 } from "./controllers/session-management.ts";
 import { deleteSessionAndRefresh, loadSessions, patchSession } from "./controllers/sessions.ts";
 import {
@@ -814,6 +816,14 @@ export function renderApp(state: AppViewState) {
                   state.sessionKey = sessionKey;
                   void loadChatHistory(state).then(() => state.setTab("chat"));
                 },
+                onGenerateSummary: (agentId, sessionId) =>
+                  void generateSessionSummary(state, agentId, sessionId),
+                summaries: state.sessionSummaries,
+                summaryGeneratingKey: state.sessionSummaryGeneratingKey,
+                onDelete: (agentId, sessionId) =>
+                  void deleteSessionHistory(state, agentId, sessionId).then(() =>
+                    loadSessionHistoryList(state),
+                  ),
                 onSelectionToggle: (sessionId) => {
                   const ids = state.sessionManagementSelectedIds;
                   if (ids.includes(sessionId)) {

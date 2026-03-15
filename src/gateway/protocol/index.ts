@@ -210,6 +210,10 @@ import {
   SessionHistoryExportParamsSchema,
   type SessionHistoryReindexParams,
   SessionHistoryReindexParamsSchema,
+  type SessionHistoryDeleteParams,
+  SessionHistoryDeleteParamsSchema,
+  type SessionHistorySummarizeParams,
+  SessionHistorySummarizeParamsSchema,
   type SessionsUsageParams,
   SessionsUsageParamsSchema,
   type ShutdownEvent,
@@ -360,6 +364,12 @@ export const validateSessionHistoryExportParams = ajv.compile<SessionHistoryExpo
 );
 export const validateSessionHistoryReindexParams = ajv.compile<SessionHistoryReindexParams>(
   SessionHistoryReindexParamsSchema,
+);
+export const validateSessionHistoryDeleteParams = ajv.compile<SessionHistoryDeleteParams>(
+  SessionHistoryDeleteParamsSchema,
+);
+export const validateSessionHistorySummarizeParams = ajv.compile<SessionHistorySummarizeParams>(
+  SessionHistorySummarizeParamsSchema,
 );
 export const validateConfigGetParams = ajv.compile<ConfigGetParams>(ConfigGetParamsSchema);
 export const validateConfigSetParams = ajv.compile<ConfigSetParams>(ConfigSetParamsSchema);

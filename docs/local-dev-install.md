@@ -76,6 +76,24 @@ source ~/.zshrc
 
 Gateway log: `/tmp/myclaw-gateway.log`
 
+## UI hot reload (development)
+
+For UI changes with hot update (no rebuild/restart):
+
+1. Terminal 1: start Gateway
+
+   ```bash
+   node openclaw.mjs gateway run --allow-unconfigured
+   ```
+
+2. Terminal 2: start UI dev server
+
+   ```bash
+   pnpm ui:dev
+   ```
+
+3. Browser: open `http://localhost:5173/?gatewayUrl=ws://127.0.0.1:18789`
+
 ## After pulling updates
 
 If `dist/` changes (e.g. after `pnpm build`), the global install already points to the local files — no reinstall needed.

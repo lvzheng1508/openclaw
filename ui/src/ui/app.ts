@@ -306,6 +306,8 @@ export class OpenClawApp extends LitElement {
   @state() sessionManagementSelectedIds: string[] = [];
   @state() sessionManagementConflictPolicy: "skip" | "overwrite" = "skip";
   @state() sessionManagementActionBusy = false;
+  @state() sessionSummaries: Record<string, string> = {};
+  @state() sessionSummaryGeneratingKey: string | null = null;
   @state() historySessionAgentId: string | null = null;
   @state() historySessionId: string | null = null;
   @state() historySessionLoading = false;

@@ -165,6 +165,22 @@ export const SessionHistoryReindexParamsSchema = Type.Object(
   { additionalProperties: false },
 );
 
+export const SessionHistoryDeleteParamsSchema = Type.Object(
+  {
+    agentId: NonEmptyString,
+    sessionId: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
+export const SessionHistorySummarizeParamsSchema = Type.Object(
+  {
+    agentId: NonEmptyString,
+    sessionId: NonEmptyString,
+  },
+  { additionalProperties: false },
+);
+
 export const SessionsUsageParamsSchema = Type.Object(
   {
     /** Specific session key to analyze; if omitted returns all sessions. */

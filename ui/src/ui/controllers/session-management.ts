@@ -5,6 +5,8 @@ export type SessionHistoryListItem = {
   index: number;
   time: number;
   sessionId: string;
+  /** Backend-persisted summary (5–15 chars). */
+  summary?: string;
 };
 
 export type SessionHistoryListResult = {
@@ -36,6 +38,8 @@ export type SessionManagementState = {
   sessionManagementSelectedIds: string[];
   sessionManagementActionBusy: boolean;
   sessionManagementConflictPolicy: "skip" | "overwrite";
+  sessionSummaries: Record<string, string>;
+  sessionSummaryGeneratingKey: string | null;
   historySessionAgentId: string | null;
   historySessionId: string | null;
   historySessionLoading: boolean;
@@ -266,6 +270,55 @@ export async function exportSessionHistory(
     }
   } catch (err) {
     state.sessionManagementError = String(err);
+  } finally {
+    state.sessionManagementActionBusy = false;
+  }
+}
+
+export async function generateSessionSummary(
+  state: SessionManagementState,
+  agentId: string,
+  sessionId: string,
+): Promise<void> {
+  if (!state.client || !state.connected || state.sessionSummaryGeneratingKey) {
+    return;
+  }
+  const key = `${agentId}:${sessionId}`;
+  state.sessionSummaryGeneratingKey = key;
+  state.sessionManagementError = null;
+  try {
+    const res = await state.client.request<{ summary: string }>("sessionHistory.summarize", {
+      agentId,
+      sessionId,
+    });
+    if (res?.summary) {
+      state.sessionSummaries = { ...state.sessionSummaries, [key]: res.summary };
+    }
+  } catch (err) {
+    state.sessionManagementError = String(err);
+  } finally {
+    state.sessionSummaryGeneratingKey = null;
+  }
+}
+
+export async function deleteSessionHistory(
+  state: SessionManagementState,
+  agentId: string,
+  sessionId: string,
+): Promise<void> {
+  if (!state.client || !state.connected || state.sessionManagementActionBusy) {
+    return;
+  }
+  state.sessionManagementActionBusy = true;
+  state.sessionManagementError = null;
+  try {
+    await state.client.request<{ ok: boolean }>("sessionHistory.delete", {
+      agentId,
+      sessionId,
+    });
+  } catch (err) {
+    state.sessionManagementError = String(err);
+    return;
   } finally {
     state.sessionManagementActionBusy = false;
   }

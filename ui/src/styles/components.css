@@ -314,6 +314,19 @@
   text-align: center;
 }
 
+.session-mgmt-col-summary {
+  max-width: 200px;
+  min-width: 120px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-mgmt-table th.session-mgmt-col-summary {
+  text-align: center;
+}
+
 .session-mgmt-col-id {
   width: 280px;
   max-width: 280px;

@@ -241,6 +241,8 @@ export type AppViewState = {
   | "sessionManagementSelectedIds"
   | "sessionManagementActionBusy"
   | "sessionManagementConflictPolicy"
+  | "sessionSummaries"
+  | "sessionSummaryGeneratingKey"
   | "historySessionAgentId"
   | "historySessionId"
   | "historySessionLoading"

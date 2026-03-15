@@ -128,6 +128,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessionHistory.import",
     "sessionHistory.export",
     "sessionHistory.reindex",
+    "sessionHistory.delete",
+    "sessionHistory.summarize",
     "connect",
     "chat.inject",
     "web.login.start",
