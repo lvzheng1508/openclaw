@@ -820,10 +820,14 @@ export function renderApp(state: AppViewState) {
                   void generateSessionSummary(state, agentId, sessionId),
                 summaries: state.sessionSummaries,
                 summaryGeneratingKey: state.sessionSummaryGeneratingKey,
-                onDelete: (agentId, sessionId) =>
+                onDelete: (agentId, sessionId) => {
+                  if (!window.confirm(t("sessionManagement.deleteConfirm"))) {
+                    return;
+                  }
                   void deleteSessionHistory(state, agentId, sessionId).then(() =>
                     loadSessionHistoryList(state),
-                  ),
+                  );
+                },
                 onSelectionToggle: (sessionId) => {
                   const ids = state.sessionManagementSelectedIds;
                   if (ids.includes(sessionId)) {

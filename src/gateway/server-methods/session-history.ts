@@ -499,19 +499,32 @@ export const sessionHistoryHandlers: GatewayRequestHandlers = {
           bestEffortDeliver: false,
           senderIsOwner: true,
           agentId,
+          disableTools: true,
         },
         defaultRuntime,
         deps,
       );
 
-      const payloads = (result as { payloads?: Array<{ text?: string }> } | null)?.payloads;
-      let summary =
-        Array.isArray(payloads) && payloads.length > 0
-          ? payloads
-              .map((p) => (typeof p.text === "string" ? p.text : ""))
-              .join(" ")
-              .trim()
-          : "";
+      const payloads = (
+        result as {
+          payloads?: Array<{ text?: string; isReasoning?: boolean; isError?: boolean }>;
+        } | null
+      )?.payloads;
+      const candidateTexts = Array.isArray(payloads)
+        ? payloads
+            .filter(
+              (p) =>
+                typeof p.text === "string" &&
+                p.text.trim() &&
+                !(p as { isReasoning?: boolean }).isReasoning &&
+                !(p as { isError?: boolean }).isError,
+            )
+            .map((p) => (p.text as string).trim())
+        : [];
+      const rawSummary = candidateTexts.length > 0 ? candidateTexts[candidateTexts.length - 1] : "";
+      const looksLikeToolOrXml = (s: string) =>
+        /<tool_call\b/i.test(s) || /<invoke\b/i.test(s) || /<\/invoke>/i.test(s);
+      let summary = rawSummary && !looksLikeToolOrXml(rawSummary) ? rawSummary : "";
       if (!summary) {
         summary = "无内容";
       }

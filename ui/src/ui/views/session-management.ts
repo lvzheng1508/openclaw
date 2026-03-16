@@ -263,8 +263,8 @@ function renderRow(
       </td>
       <td class="session-mgmt-col-index">${row.index}</td>
       <td class="session-mgmt-col-time">${formatMs(row.time)}</td>
-      <td class="session-mgmt-col-summary">
-        <span class="muted" style="font-size: 12px;">${summary || "—"}</span>
+      <td class="session-mgmt-col-summary" title=${summary && summary !== "—" ? summary : ""}>
+        <span class="muted session-mgmt-summary-text" style="font-size: 12px;">${summary || "—"}</span>
       </td>
       <td class="session-mgmt-col-id">
         <a
