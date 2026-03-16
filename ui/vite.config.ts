@@ -35,7 +35,11 @@ export default defineConfig(() => {
       chunkSizeWarningLimit: 1024,
     },
     server: {
-      host: true,
+      // Default to 127.0.0.1 to avoid os.networkInterfaces() which can throw in sandbox/Node envs
+      host:
+        process.env.OPENCLAW_UI_DEV_HOST === "0"
+          ? true
+          : process.env.OPENCLAW_UI_DEV_HOST || "127.0.0.1",
       port: 5173,
       strictPort: true,
     },
