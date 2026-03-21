@@ -179,6 +179,9 @@ export const zh_CN: TranslationMap = {
     exportWithCount: "导出 ({count})",
     exportTitle: "将选中的会话导出到目录",
     rebuildIndex: "重建索引",
+    importUnavailable:
+      "当前控制界面版本不支持从网关导入（无对应接口）。如需导入请手动将 JSONL 放入工作区。",
+    rebuildUnavailable: "当前控制界面版本不支持重建索引（无对应网关接口）。",
     loading: "加载中…",
     agent: "代理",
     startDate: "开始日期",

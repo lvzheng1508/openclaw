@@ -246,6 +246,7 @@ export type AppViewState = {
   | "sessionSummaryGeneratingKey"
   | "historySessionAgentId"
   | "historySessionId"
+  | "historySessionKey"
   | "historySessionLoading"
   | "historySessionError"
   | "historySessionDetail"

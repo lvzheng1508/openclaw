@@ -1,17 +1,16 @@
+import { t } from "../../i18n/index.ts";
 import type { GatewayBrowserClient } from "../gateway.ts";
 import type { AgentsListResult } from "../types.ts";
 
 export type SessionHistoryListItem = {
   index: number;
   time: number;
+  /** Transcript / display id (fallback: store key). */
   sessionId: string;
-  /** Backend-persisted summary (5–15 chars). */
+  /** Canonical gateway session store key (use for RPC). */
+  sessionKey: string;
+  /** Short label from list metadata. */
   summary?: string;
-};
-
-export type SessionHistoryListResult = {
-  items: SessionHistoryListItem[];
-  total: number;
 };
 
 export type SessionManagementListItem = SessionHistoryListItem;
@@ -42,15 +41,46 @@ export type SessionManagementState = {
   sessionSummaryGeneratingKey: string | null;
   historySessionAgentId: string | null;
   historySessionId: string | null;
+  /** Canonical store key for sessions.get / delete (preferred over agentId+sessionId). */
+  historySessionKey: string | null;
   historySessionLoading: boolean;
   historySessionError: string | null;
   historySessionDetail: HistorySessionDetail | null;
 };
 
 const DEFAULT_AGENT_ID = "main";
+const SESSION_LIST_FETCH_LIMIT = 2000;
 
 function resolveDefaultAgentId(agentsList: AgentsListResult | null): string | null {
   return agentsList?.defaultId ?? agentsList?.agents?.[0]?.id ?? null;
+}
+
+function utcDayStartMs(isoDate: string): number {
+  return new Date(`${isoDate.trim()}T00:00:00.000Z`).getTime();
+}
+
+function utcDayEndMs(isoDate: string): number {
+  return new Date(`${isoDate.trim()}T23:59:59.999Z`).getTime();
+}
+
+function pickListSummary(row: {
+  derivedTitle?: string;
+  lastMessagePreview?: string;
+  displayName?: string;
+}): string | undefined {
+  const title = row.derivedTitle?.trim();
+  if (title) {
+    return title.length > 120 ? `${title.slice(0, 117)}…` : title;
+  }
+  const preview = row.lastMessagePreview?.trim();
+  if (preview) {
+    return preview.length > 120 ? `${preview.slice(0, 117)}…` : preview;
+  }
+  const name = row.displayName?.trim();
+  if (name) {
+    return name.length > 120 ? `${name.slice(0, 117)}…` : name;
+  }
+  return undefined;
 }
 
 export async function loadSessionManagementShell(state: SessionManagementState) {
@@ -75,21 +105,43 @@ export async function loadSessionHistoryList(state: SessionManagementState) {
   state.sessionManagementLoading = true;
   state.sessionManagementError = null;
   try {
-    const res = await state.client.request<SessionHistoryListResult>("sessionHistory.list", {
+    const res = await state.client.request<{
+      sessions: Array<{
+        key: string;
+        sessionId?: string;
+        updatedAt: number | null;
+        derivedTitle?: string;
+        lastMessagePreview?: string;
+        displayName?: string;
+      }>;
+    }>("sessions.list", {
       agentId,
-      page: state.sessionManagementPage,
-      pageSize: state.sessionManagementPageSize,
-      ...(state.sessionManagementStartDate && {
-        startDate: state.sessionManagementStartDate,
-      }),
-      ...(state.sessionManagementEndDate && {
-        endDate: state.sessionManagementEndDate,
-      }),
+      limit: SESSION_LIST_FETCH_LIMIT,
+      includeDerivedTitles: true,
+      includeLastMessage: true,
     });
-    if (res) {
-      state.sessionManagementItems = res.items;
-      state.sessionManagementTotal = res.total;
+    let sessions = res.sessions ?? [];
+    if (state.sessionManagementStartDate?.trim()) {
+      const start = utcDayStartMs(state.sessionManagementStartDate);
+      sessions = sessions.filter((s) => (s.updatedAt ?? 0) >= start);
     }
+    if (state.sessionManagementEndDate?.trim()) {
+      const end = utcDayEndMs(state.sessionManagementEndDate);
+      sessions = sessions.filter((s) => (s.updatedAt ?? 0) <= end);
+    }
+    const total = sessions.length;
+    const page = Math.max(1, state.sessionManagementPage);
+    const pageSize = Math.max(1, state.sessionManagementPageSize);
+    const startIdx = (page - 1) * pageSize;
+    const slice = sessions.slice(startIdx, startIdx + pageSize);
+    state.sessionManagementItems = slice.map((row, i) => ({
+      index: startIdx + i + 1,
+      time: row.updatedAt ?? 0,
+      sessionId: row.sessionId?.trim() || row.key,
+      sessionKey: row.key,
+      summary: pickListSummary(row),
+    }));
+    state.sessionManagementTotal = total;
   } catch (err) {
     state.sessionManagementError = String(err);
   } finally {
@@ -103,7 +155,10 @@ export async function loadHistorySessionDetail(state: SessionManagementState) {
   }
   const agentId = state.historySessionAgentId ?? resolveDefaultAgentId(state.agentsList);
   const sessionId = state.historySessionId;
-  if (!agentId || !sessionId?.trim()) {
+  const sessionKey =
+    state.historySessionKey?.trim() ||
+    (agentId && sessionId?.trim() ? `agent:${agentId}:${sessionId.trim()}` : "");
+  if (!agentId || !sessionKey) {
     state.historySessionDetail = null;
     return;
   }
@@ -111,15 +166,14 @@ export async function loadHistorySessionDetail(state: SessionManagementState) {
   state.historySessionError = null;
   state.historySessionDetail = null;
   try {
-    const res = await state.client.request<{ transcript: unknown[] }>("sessionHistory.get", {
-      agentId,
-      sessionId: sessionId.trim(),
+    const res = await state.client.request<{ messages: unknown[] }>("sessions.get", {
+      key: sessionKey,
     });
     if (res) {
       state.historySessionDetail = {
         agentId,
-        sessionId: sessionId.trim(),
-        transcript: res.transcript,
+        sessionId: sessionId?.trim() || sessionKey,
+        transcript: res.messages ?? [],
       };
     }
   } catch (err) {
@@ -143,7 +197,7 @@ function isFileSystemAccessSupported(): boolean {
 
 export async function importSessionHistory(
   state: SessionManagementState,
-  conflictPolicy: "skip" | "overwrite",
+  _conflictPolicy: "skip" | "overwrite",
 ): Promise<void> {
   if (!state.client || !state.connected || !isFileSystemAccessSupported()) {
     return;
@@ -151,86 +205,29 @@ export async function importSessionHistory(
   if (state.sessionManagementActionBusy) {
     return;
   }
-  const agentId = state.sessionManagementAgentId ?? resolveDefaultAgentId(state.agentsList);
-  if (!agentId) {
-    return;
-  }
-  let handles: FileSystemFileHandle[];
-  try {
-    handles = await (
-      window as unknown as {
-        showOpenFilePicker: (opts?: object) => Promise<FileSystemFileHandle[]>;
-      }
-    ).showOpenFilePicker({
-      types: [
-        {
-          description: "JSONL transcript files",
-          accept: { "application/jsonlines": [".jsonl"], "text/plain": [".jsonl"] },
-        },
-      ],
-      multiple: true,
-    });
-  } catch (err) {
-    if ((err as { name?: string })?.name === "AbortError") {
-      return;
-    }
-    state.sessionManagementError = String(err);
-    return;
-  }
-  state.sessionManagementError = null;
-  const files: { name: string; contentBase64: string }[] = [];
-  for (const h of handles) {
-    const file = await h.getFile();
-    const buf = await file.arrayBuffer();
-    const bytes = new Uint8Array(buf);
-    let base64 = "";
-    for (let i = 0; i < bytes.length; i += 8192) {
-      const chunk = bytes.subarray(i, Math.min(i + 8192, bytes.length));
-      base64 += String.fromCharCode.apply(null, Array.from(chunk));
-    }
-    base64 = btoa(base64);
-    files.push({ name: file.name, contentBase64: base64 });
-  }
-  if (files.length === 0) {
-    return;
-  }
-  state.sessionManagementActionBusy = true;
-  try {
-    const res = await state.client.request<{
-      results: { name: string; ok: boolean; skipped?: boolean }[];
-    }>("sessionHistory.import", { agentId, files, conflictPolicy });
-    if (res?.results) {
-      const imported = res.results.filter((r) => r.ok).length;
-      const skipped = res.results.filter((r) => r.skipped).length;
-      state.sessionManagementError = null;
-      if (skipped > 0) {
-        state.sessionManagementError = `Imported ${imported}, skipped ${skipped} (already exist).`;
-      }
-    }
-  } catch (err) {
-    state.sessionManagementError = String(err);
-  } finally {
-    state.sessionManagementActionBusy = false;
-  }
+  void _conflictPolicy;
+  state.sessionManagementError = t("sessionManagement.importUnavailable");
+}
+
+function safeExportFileName(sessionKey: string): string {
+  const base = sessionKey.replace(/[^a-zA-Z0-9._-]+/g, "_").replace(/^_+|_+$/g, "");
+  const trimmed = base.length > 120 ? base.slice(0, 120) : base;
+  return `${trimmed || "session"}.jsonl`;
 }
 
 export async function exportSessionHistory(
   state: SessionManagementState,
-  sessionIds: string[],
+  sessionKeys: string[],
 ): Promise<void> {
   if (
     !state.client ||
     !state.connected ||
-    sessionIds.length === 0 ||
+    sessionKeys.length === 0 ||
     !isFileSystemAccessSupported()
   ) {
     return;
   }
   if (state.sessionManagementActionBusy) {
-    return;
-  }
-  const agentId = state.sessionManagementAgentId ?? resolveDefaultAgentId(state.agentsList);
-  if (!agentId) {
     return;
   }
   let dirHandle: FileSystemDirectoryHandle;
@@ -250,22 +247,14 @@ export async function exportSessionHistory(
   state.sessionManagementError = null;
   state.sessionManagementActionBusy = true;
   try {
-    const res = await state.client.request<{ files: { name: string; contentBase64: string }[] }>(
-      "sessionHistory.export",
-      { agentId, sessionIds },
-    );
-    if (!res?.files?.length) {
-      return;
-    }
-    for (const f of res.files) {
-      const handle = await dirHandle.getFileHandle(f.name, { create: true });
+    for (const key of sessionKeys) {
+      const res = await state.client.request<{ messages: unknown[] }>("sessions.get", { key });
+      const messages = res.messages ?? [];
+      const jsonl = `${messages.map((m) => JSON.stringify(m)).join("\n")}\n`;
+      const name = safeExportFileName(key);
+      const handle = await dirHandle.getFileHandle(name, { create: true });
       const w = await handle.createWritable();
-      const decoded = atob(f.contentBase64);
-      const bytes = new Uint8Array(decoded.length);
-      for (let i = 0; i < decoded.length; i++) {
-        bytes[i] = decoded.charCodeAt(i);
-      }
-      await w.write(bytes);
+      await w.write(jsonl);
       await w.close();
     }
   } catch (err) {
@@ -278,21 +267,30 @@ export async function exportSessionHistory(
 export async function generateSessionSummary(
   state: SessionManagementState,
   agentId: string,
-  sessionId: string,
+  sessionKey: string,
 ): Promise<void> {
   if (!state.client || !state.connected || state.sessionSummaryGeneratingKey) {
     return;
   }
-  const key = `${agentId}:${sessionId}`;
+  const key = `${agentId}:${sessionKey}`;
   state.sessionSummaryGeneratingKey = key;
   state.sessionManagementError = null;
   try {
-    const res = await state.client.request<{ summary: string }>("sessionHistory.summarize", {
-      agentId,
-      sessionId,
+    const res = await state.client.request<{
+      previews: Array<{ items: Array<{ text: string }> }>;
+    }>("sessions.preview", {
+      keys: [sessionKey],
+      limit: 6,
+      maxChars: 400,
     });
-    if (res?.summary) {
-      state.sessionSummaries = { ...state.sessionSummaries, [key]: res.summary };
+    const preview = res.previews?.[0];
+    const text =
+      preview?.items
+        ?.map((item) => item.text?.trim())
+        .filter(Boolean)
+        .join(" ") ?? "";
+    if (text) {
+      state.sessionSummaries = { ...state.sessionSummaries, [key]: text };
     }
   } catch (err) {
     state.sessionManagementError = String(err);
@@ -303,18 +301,23 @@ export async function generateSessionSummary(
 
 export async function deleteSessionHistory(
   state: SessionManagementState,
-  agentId: string,
-  sessionId: string,
+  _agentId: string,
+  sessionKey: string,
 ): Promise<void> {
   if (!state.client || !state.connected || state.sessionManagementActionBusy) {
+    return;
+  }
+  void _agentId;
+  const key = sessionKey?.trim();
+  if (!key) {
     return;
   }
   state.sessionManagementActionBusy = true;
   state.sessionManagementError = null;
   try {
-    await state.client.request<{ ok: boolean }>("sessionHistory.delete", {
-      agentId,
-      sessionId,
+    await state.client.request<{ ok: boolean }>("sessions.delete", {
+      key,
+      deleteTranscript: true,
     });
   } catch (err) {
     state.sessionManagementError = String(err);
@@ -328,13 +331,9 @@ export async function rebuildSessionIndex(state: SessionManagementState): Promis
   if (!state.client || !state.connected || state.sessionManagementActionBusy) {
     return;
   }
-  const agentId = state.sessionManagementAgentId ?? resolveDefaultAgentId(state.agentsList);
   state.sessionManagementActionBusy = true;
   try {
-    await state.client.request("sessionHistory.reindex", { agentId: agentId ?? undefined });
-    state.sessionManagementError = null;
-  } catch (err) {
-    state.sessionManagementError = String(err);
+    state.sessionManagementError = t("sessionManagement.rebuildUnavailable");
   } finally {
     state.sessionManagementActionBusy = false;
   }

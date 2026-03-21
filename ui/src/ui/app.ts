@@ -311,6 +311,7 @@ export class OpenClawApp extends LitElement {
   @state() sessionSummaryGeneratingKey: string | null = null;
   @state() historySessionAgentId: string | null = null;
   @state() historySessionId: string | null = null;
+  @state() historySessionKey: string | null = null;
   @state() historySessionLoading = false;
   @state() historySessionError: string | null = null;
   @state() historySessionDetail: HistorySessionDetail | null = null;

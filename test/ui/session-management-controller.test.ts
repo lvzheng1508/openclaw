@@ -10,14 +10,22 @@ type SessionManagementState = {
   sessionManagementLoading: boolean;
   sessionManagementError: string | null;
   sessionManagementAgentId: string | null;
-  sessionManagementItems: { index: number; time: number; sessionId: string }[];
+  sessionManagementItems: {
+    index: number;
+    time: number;
+    sessionId: string;
+    sessionKey: string;
+  }[];
   sessionManagementTotal: number;
   sessionManagementPage: number;
   sessionManagementPageSize: number;
+  sessionManagementStartDate: string;
+  sessionManagementEndDate: string;
   sessionManagementActionBusy: boolean;
   agentsList: { agents: { id: string }[]; defaultId?: string } | null;
   historySessionAgentId: string | null;
   historySessionId: string | null;
+  historySessionKey: string | null;
   historySessionDetail: { transcript: unknown[] } | null;
 };
 
@@ -39,25 +47,39 @@ function createState(overrides: Partial<SessionManagementState> = {}): SessionMa
     sessionManagementTotal: 0,
     sessionManagementPage: 1,
     sessionManagementPageSize: 50,
+    sessionManagementStartDate: "",
+    sessionManagementEndDate: "",
     sessionManagementActionBusy: false,
     agentsList: { agents: [{ id: "main" }], defaultId: "main" },
     historySessionAgentId: null,
     historySessionId: null,
+    historySessionKey: null,
     historySessionDetail: null,
     ...overrides,
   };
 }
 
 describe("session-management controller", () => {
-  it("loadSessionHistoryList calls sessionHistory.list and populates items", async () => {
+  it("loadSessionHistoryList calls sessions.list and populates items", async () => {
+    const t0 = Date.UTC(2026, 2, 1, 12, 0, 0);
+    const t1 = Date.UTC(2026, 2, 2, 12, 0, 0);
     const state = createState({
       client: {
         request: vi.fn().mockResolvedValue({
-          items: [
-            { index: 1, time: 1000, sessionId: "sess-1" },
-            { index: 2, time: 2000, sessionId: "sess-2" },
+          sessions: [
+            {
+              key: "agent:main:sess-a",
+              sessionId: "transcript-a",
+              updatedAt: t0,
+              derivedTitle: "A",
+            },
+            {
+              key: "agent:main:sess-b",
+              sessionId: "transcript-b",
+              updatedAt: t1,
+              derivedTitle: "B",
+            },
           ],
-          total: 2,
         }),
       },
       connected: true,
@@ -66,9 +88,17 @@ describe("session-management controller", () => {
 
     await loadSessionHistoryList(state);
 
-    expect(state.client?.request).toHaveBeenCalledWith("sessionHistory.list", expect.any(Object));
+    expect(state.client?.request).toHaveBeenCalledWith(
+      "sessions.list",
+      expect.objectContaining({
+        agentId: "main",
+        includeDerivedTitles: true,
+        includeLastMessage: true,
+      }),
+    );
     expect(state.sessionManagementItems).toHaveLength(2);
-    expect(state.sessionManagementItems[0].sessionId).toBe("sess-1");
+    expect(state.sessionManagementItems[0].sessionKey).toBe("agent:main:sess-a");
+    expect(state.sessionManagementItems[0].sessionId).toBe("transcript-a");
     expect(state.sessionManagementTotal).toBe(2);
     expect(state.sessionManagementLoading).toBe(false);
   });
@@ -84,35 +114,36 @@ describe("session-management controller", () => {
     expect(state.client?.request).not.toHaveBeenCalled();
   });
 
-  it("loadHistorySessionDetail calls sessionHistory.get and populates detail", async () => {
+  it("loadHistorySessionDetail calls sessions.get and populates detail", async () => {
     const state = createState({
       client: {
         request: vi.fn().mockResolvedValue({
-          transcript: [{ role: "user", content: [] }],
+          messages: [{ role: "user", content: [] }],
         }),
       },
       connected: true,
       historySessionAgentId: "main",
-      historySessionId: "sess-1",
+      historySessionId: "transcript-a",
+      historySessionKey: "agent:main:sess-a",
     });
 
     await loadHistorySessionDetail(state);
 
-    expect(state.client?.request).toHaveBeenCalledWith("sessionHistory.get", {
-      agentId: "main",
-      sessionId: "sess-1",
+    expect(state.client?.request).toHaveBeenCalledWith("sessions.get", {
+      key: "agent:main:sess-a",
     });
     expect(state.historySessionDetail).toBeDefined();
     expect(state.historySessionDetail?.transcript).toHaveLength(1);
     expect(state.historySessionLoading).toBe(false);
   });
 
-  it("loadHistorySessionDetail does nothing when sessionId is empty", async () => {
+  it("loadHistorySessionDetail does nothing when session key is empty", async () => {
     const state = createState({
       client: { request: vi.fn() },
       connected: true,
       historySessionAgentId: "main",
       historySessionId: "",
+      historySessionKey: null,
     });
 
     await loadHistorySessionDetail(state);
@@ -121,7 +152,7 @@ describe("session-management controller", () => {
     expect(state.historySessionDetail).toBeNull();
   });
 
-  it("rebuildSessionIndex calls sessionHistory.reindex", async () => {
+  it("rebuildSessionIndex does not call removed sessionHistory.reindex", async () => {
     const state = createState({
       client: { request: vi.fn().mockResolvedValue({ ok: true }) },
       connected: true,
@@ -130,8 +161,6 @@ describe("session-management controller", () => {
 
     await rebuildSessionIndex(state);
 
-    expect(state.client?.request).toHaveBeenCalledWith("sessionHistory.reindex", {
-      agentId: "main",
-    });
+    expect(state.client?.request).not.toHaveBeenCalled();
   });
 });

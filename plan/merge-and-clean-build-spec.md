@@ -47,6 +47,7 @@
   - `plan/2026-03-08-session-management-execution.md`
   - `plan/2026-03-09-workspace-memory-files-dynamic-create.md`
   - `plan/2026-03-12-claude-skills-execution.md`
+  - `plan/2026-03-15-session-summary-execution.md`
 - 修复范围只针对合并回归问题，避免顺带重构。
 
 ## 彻底构建验证（必做）

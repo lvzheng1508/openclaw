@@ -26,13 +26,14 @@ export type SessionManagementShellProps = {
   onEndDateChange: (value: string) => void;
   onRefresh: () => void;
   onPageChange: (page: number) => void;
-  onViewHistory: (agentId: string, sessionId: string) => void;
-  onSwitchToChat: (agentId: string, sessionId: string) => void;
-  onGenerateSummary: (agentId: string, sessionId: string) => void;
-  onDelete: (agentId: string, sessionId: string) => void;
+  onViewHistory: (agentId: string, sessionKey: string, sessionLabel: string) => void;
+  onSwitchToChat: (agentId: string, sessionKey: string) => void;
+  onGenerateSummary: (agentId: string, sessionKey: string) => void;
+  onDelete: (agentId: string, sessionKey: string) => void;
   summaries: Record<string, string>;
   summaryGeneratingKey: string | null;
-  onSelectionToggle: (sessionId: string) => void;
+  /** Selected canonical session keys (same as `sessionKey` on rows). */
+  onSelectionToggle: (sessionKey: string) => void;
   onSelectAll: () => void;
   onClearSelection: () => void;
   onConflictPolicyChange: (value: "skip" | "overwrite") => void;
@@ -237,18 +238,18 @@ function renderRow(
   row: SessionHistoryListItem,
   agentId: string,
   basePath: string,
-  selectedIds: string[],
+  selectedKeys: string[],
   summaries: Record<string, string>,
   summaryGeneratingKey: string | null,
-  onViewHistory: (agentId: string, sessionId: string) => void,
-  onSwitchToChat: (agentId: string, sessionId: string) => void,
-  onGenerateSummary: (agentId: string, sessionId: string) => void,
-  onDelete: (agentId: string, sessionId: string) => void,
-  onSelectionToggle: (sessionId: string) => void,
+  onViewHistory: (agentId: string, sessionKey: string, sessionLabel: string) => void,
+  onSwitchToChat: (agentId: string, sessionKey: string) => void,
+  onGenerateSummary: (agentId: string, sessionKey: string) => void,
+  onDelete: (agentId: string, sessionKey: string) => void,
+  onSelectionToggle: (sessionKey: string) => void,
 ) {
   const chatUrl = pathForTab("historySession", basePath);
-  const checked = selectedIds.includes(row.sessionId);
-  const summaryKey = `${agentId}:${row.sessionId}`;
+  const checked = selectedKeys.includes(row.sessionKey);
+  const summaryKey = `${agentId}:${row.sessionKey}`;
   const summary = summaries[summaryKey] ?? row.summary ?? "";
   const isGenerating = summaryGeneratingKey === summaryKey;
   return html`
@@ -257,7 +258,7 @@ function renderRow(
         <input
           type="checkbox"
           .checked=${checked}
-          @change=${() => onSelectionToggle(row.sessionId)}
+          @change=${() => onSelectionToggle(row.sessionKey)}
           title=${t("sessionManagement.selectForExport")}
         />
       </td>
@@ -273,27 +274,27 @@ function renderRow(
           title=${row.sessionId}
           @click=${(e: Event) => {
             e.preventDefault();
-            onViewHistory(agentId, row.sessionId);
+            onViewHistory(agentId, row.sessionKey, row.sessionId);
           }}
         >
           ${row.sessionId.length > 25 ? `${row.sessionId.slice(0, 25)}…` : row.sessionId}
         </a>
       </td>
       <td class="session-mgmt-col-actions">
-        <button class="btn btn--sm" @click=${() => onViewHistory(agentId, row.sessionId)}>
+        <button class="btn btn--sm" @click=${() => onViewHistory(agentId, row.sessionKey, row.sessionId)}>
           ${t("sessionManagement.viewHistory")}
         </button>
-        <button class="btn btn--sm" @click=${() => onSwitchToChat(agentId, row.sessionId)}>
+        <button class="btn btn--sm" @click=${() => onSwitchToChat(agentId, row.sessionKey)}>
           ${t("sessionManagement.switchToChat")}
         </button>
         <button
           class="btn btn--sm"
           ?disabled=${isGenerating}
-          @click=${() => onGenerateSummary(agentId, row.sessionId)}
+          @click=${() => onGenerateSummary(agentId, row.sessionKey)}
         >
           ${isGenerating ? t("sessionManagement.generating") : t("sessionManagement.generateSummary")}
         </button>
-        <button class="btn btn--sm" @click=${() => onDelete(agentId, row.sessionId)}>
+        <button class="btn btn--sm" @click=${() => onDelete(agentId, row.sessionKey)}>
           ${t("sessionManagement.delete")}
         </button>
       </td>

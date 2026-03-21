@@ -182,6 +182,10 @@ export const en: TranslationMap = {
     exportWithCount: "Export ({count})",
     exportTitle: "Export selected sessions to a directory",
     rebuildIndex: "Rebuild Index",
+    importUnavailable:
+      "Import is not available from this Control UI build (no gateway endpoint). Copy JSONL into the workspace manually if needed.",
+    rebuildUnavailable:
+      "Rebuild index is not available from this Control UI build (no gateway endpoint).",
     loading: "Loading…",
     agent: "Agent",
     startDate: "Start date",

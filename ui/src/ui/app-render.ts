@@ -820,40 +820,40 @@ export function renderApp(state: AppViewState) {
                   state.sessionManagementPage = page;
                   void loadSessionHistoryList(state);
                 },
-                onViewHistory: (agentId, sessionId) => {
+                onViewHistory: (agentId, sessionKey, sessionLabel) => {
                   state.historySessionAgentId = agentId;
-                  state.historySessionId = sessionId;
+                  state.historySessionKey = sessionKey;
+                  state.historySessionId = sessionLabel;
                   state.setTab("historySession");
                 },
-                onSwitchToChat: (agentId, sessionId) => {
-                  const sessionKey = `agent:${agentId}:${sessionId}`;
+                onSwitchToChat: (_agentId, sessionKey) => {
                   state.sessionKey = sessionKey;
                   void loadChatHistory(state).then(() => state.setTab("chat"));
                 },
-                onGenerateSummary: (agentId, sessionId) =>
-                  void generateSessionSummary(state, agentId, sessionId),
+                onGenerateSummary: (agentId, sessionKey) =>
+                  void generateSessionSummary(state, agentId, sessionKey),
                 summaries: state.sessionSummaries,
                 summaryGeneratingKey: state.sessionSummaryGeneratingKey,
-                onDelete: (agentId, sessionId) => {
+                onDelete: (agentId, sessionKey) => {
                   if (!window.confirm(t("sessionManagement.deleteConfirm"))) {
                     return;
                   }
-                  void deleteSessionHistory(state, agentId, sessionId).then(() =>
+                  void deleteSessionHistory(state, agentId, sessionKey).then(() =>
                     loadSessionHistoryList(state),
                   );
                 },
-                onSelectionToggle: (sessionId) => {
+                onSelectionToggle: (sessionKey) => {
                   const ids = state.sessionManagementSelectedIds;
-                  if (ids.includes(sessionId)) {
-                    state.sessionManagementSelectedIds = ids.filter((id) => id !== sessionId);
+                  if (ids.includes(sessionKey)) {
+                    state.sessionManagementSelectedIds = ids.filter((id) => id !== sessionKey);
                   } else {
-                    state.sessionManagementSelectedIds = [...ids, sessionId];
+                    state.sessionManagementSelectedIds = [...ids, sessionKey];
                   }
                 },
                 onSelectAll: () => {
-                  const ids = state.sessionManagementItems.map((r) => r.sessionId);
+                  const keys = state.sessionManagementItems.map((r) => r.sessionKey);
                   state.sessionManagementSelectedIds = [
-                    ...new Set([...state.sessionManagementSelectedIds, ...ids]),
+                    ...new Set([...state.sessionManagementSelectedIds, ...keys]),
                   ];
                 },
                 onClearSelection: () => {
@@ -885,12 +885,10 @@ export function renderApp(state: AppViewState) {
                 basePath: state.basePath,
                 onBack: () => state.setTab("sessionManagement"),
                 onSwitchToChat: () => {
-                  const agentId = state.historySessionAgentId ?? "main";
-                  const sessionId = state.historySessionId ?? "";
-                  if (!sessionId) {
+                  const sessionKey = state.historySessionKey?.trim();
+                  if (!sessionKey) {
                     return;
                   }
-                  const sessionKey = `agent:${agentId}:${sessionId}`;
                   state.sessionKey = sessionKey;
                   void loadChatHistory(state).then(() => state.setTab("chat"));
                 },
