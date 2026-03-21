@@ -22,7 +22,6 @@ import { nodePendingHandlers } from "./server-methods/nodes-pending.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
 import { pushHandlers } from "./server-methods/push.js";
 import { sendHandlers } from "./server-methods/send.js";
-import { sessionHistoryHandlers } from "./server-methods/session-history.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
 import { systemHandlers } from "./server-methods/system.js";
@@ -85,7 +84,6 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...toolsCatalogHandlers,
   ...ttsHandlers,
   ...skillsHandlers,
-  ...sessionHistoryHandlers,
   ...sessionsHandlers,
   ...systemHandlers,
   ...updateHandlers,
