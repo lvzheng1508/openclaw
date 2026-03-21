@@ -48,6 +48,10 @@ import {
   TalkConfigParamsSchema,
   type TalkConfigResult,
   TalkConfigResultSchema,
+  type TalkSpeakParams,
+  TalkSpeakParamsSchema,
+  type TalkSpeakResult,
+  TalkSpeakResultSchema,
   type ChannelsStatusParams,
   ChannelsStatusParamsSchema,
   type ChannelsStatusResult,
@@ -186,12 +190,20 @@ import {
   type SecretsResolveResult,
   SecretsResolveParamsSchema,
   SecretsResolveResultSchema,
+  type SessionsAbortParams,
+  SessionsAbortParamsSchema,
   type SessionsCompactParams,
   SessionsCompactParamsSchema,
+  type SessionsCreateParams,
+  SessionsCreateParamsSchema,
   type SessionsDeleteParams,
   SessionsDeleteParamsSchema,
   type SessionsListParams,
   SessionsListParamsSchema,
+  type SessionsMessagesSubscribeParams,
+  SessionsMessagesSubscribeParamsSchema,
+  type SessionsMessagesUnsubscribeParams,
+  SessionsMessagesUnsubscribeParamsSchema,
   type SessionsPatchParams,
   SessionsPatchParamsSchema,
   type SessionsPreviewParams,
@@ -200,20 +212,8 @@ import {
   SessionsResetParamsSchema,
   type SessionsResolveParams,
   SessionsResolveParamsSchema,
-  type SessionHistoryListParams,
-  SessionHistoryListParamsSchema,
-  type SessionHistoryGetParams,
-  SessionHistoryGetParamsSchema,
-  type SessionHistoryImportParams,
-  SessionHistoryImportParamsSchema,
-  type SessionHistoryExportParams,
-  SessionHistoryExportParamsSchema,
-  type SessionHistoryReindexParams,
-  SessionHistoryReindexParamsSchema,
-  type SessionHistoryDeleteParams,
-  SessionHistoryDeleteParamsSchema,
-  type SessionHistorySummarizeParams,
-  SessionHistorySummarizeParamsSchema,
+  type SessionsSendParams,
+  SessionsSendParamsSchema,
   type SessionsUsageParams,
   SessionsUsageParamsSchema,
   type ShutdownEvent,
@@ -338,6 +338,17 @@ export const validateSessionsPreviewParams = ajv.compile<SessionsPreviewParams>(
 export const validateSessionsResolveParams = ajv.compile<SessionsResolveParams>(
   SessionsResolveParamsSchema,
 );
+export const validateSessionsCreateParams = ajv.compile<SessionsCreateParams>(
+  SessionsCreateParamsSchema,
+);
+export const validateSessionsSendParams = ajv.compile<SessionsSendParams>(SessionsSendParamsSchema);
+export const validateSessionsMessagesSubscribeParams = ajv.compile<SessionsMessagesSubscribeParams>(
+  SessionsMessagesSubscribeParamsSchema,
+);
+export const validateSessionsMessagesUnsubscribeParams =
+  ajv.compile<SessionsMessagesUnsubscribeParams>(SessionsMessagesUnsubscribeParamsSchema);
+export const validateSessionsAbortParams =
+  ajv.compile<SessionsAbortParams>(SessionsAbortParamsSchema);
 export const validateSessionsPatchParams =
   ajv.compile<SessionsPatchParams>(SessionsPatchParamsSchema);
 export const validateSessionsResetParams =
@@ -350,27 +361,6 @@ export const validateSessionsCompactParams = ajv.compile<SessionsCompactParams>(
 );
 export const validateSessionsUsageParams =
   ajv.compile<SessionsUsageParams>(SessionsUsageParamsSchema);
-export const validateSessionHistoryListParams = ajv.compile<SessionHistoryListParams>(
-  SessionHistoryListParamsSchema,
-);
-export const validateSessionHistoryGetParams = ajv.compile<SessionHistoryGetParams>(
-  SessionHistoryGetParamsSchema,
-);
-export const validateSessionHistoryImportParams = ajv.compile<SessionHistoryImportParams>(
-  SessionHistoryImportParamsSchema,
-);
-export const validateSessionHistoryExportParams = ajv.compile<SessionHistoryExportParams>(
-  SessionHistoryExportParamsSchema,
-);
-export const validateSessionHistoryReindexParams = ajv.compile<SessionHistoryReindexParams>(
-  SessionHistoryReindexParamsSchema,
-);
-export const validateSessionHistoryDeleteParams = ajv.compile<SessionHistoryDeleteParams>(
-  SessionHistoryDeleteParamsSchema,
-);
-export const validateSessionHistorySummarizeParams = ajv.compile<SessionHistorySummarizeParams>(
-  SessionHistorySummarizeParamsSchema,
-);
 export const validateConfigGetParams = ajv.compile<ConfigGetParams>(ConfigGetParamsSchema);
 export const validateConfigSetParams = ajv.compile<ConfigSetParams>(ConfigSetParamsSchema);
 export const validateConfigApplyParams = ajv.compile<ConfigApplyParams>(ConfigApplyParamsSchema);
@@ -389,6 +379,8 @@ export const validateWizardStatusParams = ajv.compile<WizardStatusParams>(Wizard
 export const validateTalkModeParams = ajv.compile<TalkModeParams>(TalkModeParamsSchema);
 export const validateTalkConfigParams = ajv.compile<TalkConfigParams>(TalkConfigParamsSchema);
 export const validateTalkConfigResult = ajv.compile<TalkConfigResult>(TalkConfigResultSchema);
+export const validateTalkSpeakParams = ajv.compile<TalkSpeakParams>(TalkSpeakParamsSchema);
+export const validateTalkSpeakResult = ajv.compile<TalkSpeakResult>(TalkSpeakResultSchema);
 export const validateChannelsStatusParams = ajv.compile<ChannelsStatusParams>(
   ChannelsStatusParamsSchema,
 );
@@ -527,6 +519,10 @@ export {
   NodePendingEnqueueResultSchema,
   SessionsListParamsSchema,
   SessionsPreviewParamsSchema,
+  SessionsResolveParamsSchema,
+  SessionsCreateParamsSchema,
+  SessionsSendParamsSchema,
+  SessionsAbortParamsSchema,
   SessionsPatchParamsSchema,
   SessionsResetParamsSchema,
   SessionsDeleteParamsSchema,
@@ -550,6 +546,8 @@ export {
   WizardStatusResultSchema,
   TalkConfigParamsSchema,
   TalkConfigResultSchema,
+  TalkSpeakParamsSchema,
+  TalkSpeakResultSchema,
   ChannelsStatusParamsSchema,
   ChannelsStatusResultSchema,
   ChannelsLogoutParamsSchema,
@@ -639,6 +637,8 @@ export type {
   WizardStatusResult,
   TalkConfigParams,
   TalkConfigResult,
+  TalkSpeakParams,
+  TalkSpeakResult,
   TalkModeParams,
   ChannelsStatusParams,
   ChannelsStatusResult,
