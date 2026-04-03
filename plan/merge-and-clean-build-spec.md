@@ -18,9 +18,9 @@
    - `rm -rf dist ui/dist`
 2. 按锁文件重装依赖：
    - `pnpm install --frozen-lockfile`
-3. 构建 UI 与主工程：
+3. 构建主工程与 UI（顺序固定）：
+   - `pnpm build`（`tsdown` 默认会清空整个 `dist/`，若先跑 `ui:build` 会被删掉）
    - `pnpm ui:build`
-   - `pnpm build`
 4. 代码质量检查：
    - `pnpm check`
 
