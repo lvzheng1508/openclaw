@@ -2,17 +2,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 
 const listPotentialConfiguredChannelIds = vi.hoisted(() => vi.fn());
+const hasPotentialConfiguredChannels = vi.hoisted(() => vi.fn());
 const loadPluginManifestRegistry = vi.hoisted(() => vi.fn());
 
 vi.mock("../channels/config-presence.js", () => ({
   listPotentialConfiguredChannelIds,
+  hasPotentialConfiguredChannels,
 }));
 
-vi.mock("./manifest-registry.js", () => ({
-  loadPluginManifestRegistry,
-}));
+vi.mock("./manifest-registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./manifest-registry.js")>();
+  return {
+    ...actual,
+    loadPluginManifestRegistry,
+  };
+});
 
-import { resolveGatewayStartupPluginIds } from "./channel-plugin-ids.js";
+import {
+  resolveConfiguredChannelPluginIds,
+  resolveGatewayStartupPluginIds,
+} from "./channel-plugin-ids.js";
 
 function createManifestRegistryFixture() {
   return {
@@ -50,6 +59,58 @@ function createManifestRegistryFixture() {
         cliBackends: ["demo-cli"],
       },
       {
+        id: "codex",
+        channels: [],
+        activation: {
+          onAgentHarnesses: ["codex"],
+        },
+        origin: "bundled",
+        enabledByDefault: undefined,
+        providers: ["codex"],
+        cliBackends: [],
+      },
+      {
+        id: "activation-only-channel-plugin",
+        channels: [],
+        activation: {
+          onChannels: ["activation-only-channel"],
+        },
+        origin: "bundled",
+        enabledByDefault: undefined,
+        providers: [],
+        cliBackends: [],
+      },
+      {
+        id: "workspace-activation-channel-plugin",
+        channels: [],
+        activation: {
+          onChannels: ["workspace-activation-channel"],
+        },
+        origin: "workspace",
+        enabledByDefault: undefined,
+        providers: [],
+        cliBackends: [],
+      },
+      {
+        id: "global-activation-channel-plugin",
+        channels: [],
+        activation: {
+          onChannels: ["global-activation-channel"],
+        },
+        origin: "global",
+        enabledByDefault: undefined,
+        providers: [],
+        cliBackends: [],
+      },
+      {
+        id: "voice-call",
+        channels: [],
+        origin: "bundled",
+        enabledByDefault: undefined,
+        providers: [],
+        cliBackends: [],
+      },
+      {
         id: "memory-core",
         kind: "memory",
         channels: [],
@@ -61,14 +122,6 @@ function createManifestRegistryFixture() {
       {
         id: "memory-lancedb",
         kind: "memory",
-        channels: [],
-        origin: "bundled",
-        enabledByDefault: undefined,
-        providers: [],
-        cliBackends: [],
-      },
-      {
-        id: "voice-call",
         channels: [],
         origin: "bundled",
         enabledByDefault: undefined,
@@ -91,6 +144,7 @@ function createManifestRegistryFixture() {
 function expectStartupPluginIds(params: {
   config: OpenClawConfig;
   activationSourceConfig?: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
   expected: readonly string[];
 }) {
   expect(
@@ -100,7 +154,7 @@ function expectStartupPluginIds(params: {
         ? { activationSourceConfig: params.activationSourceConfig }
         : {}),
       workspaceDir: "/tmp",
-      env: process.env,
+      env: params.env ?? process.env,
     }),
   ).toEqual(params.expected);
   expect(loadPluginManifestRegistry).toHaveBeenCalled();
@@ -109,6 +163,7 @@ function expectStartupPluginIds(params: {
 function expectStartupPluginIdsCase(params: {
   config: OpenClawConfig;
   activationSourceConfig?: OpenClawConfig;
+  env?: NodeJS.ProcessEnv;
   expected: readonly string[];
 }) {
   expectStartupPluginIds(params);
@@ -118,9 +173,12 @@ function createStartupConfig(params: {
   enabledPluginIds?: string[];
   providerIds?: string[];
   modelId?: string;
+  embeddedHarnessRuntime?: string;
+  agentEmbeddedHarnessRuntimes?: string[];
   channelIds?: string[];
   allowPluginIds?: string[];
   noConfiguredChannels?: boolean;
+  memorySlot?: string;
 }) {
   return {
     ...(params.noConfiguredChannels
@@ -138,6 +196,7 @@ function createStartupConfig(params: {
       ? {
           plugins: {
             ...(params.allowPluginIds?.length ? { allow: params.allowPluginIds } : {}),
+            ...(params.memorySlot ? { slots: { memory: params.memorySlot } } : {}),
             entries: Object.fromEntries(
               params.enabledPluginIds.map((pluginId) => [pluginId, { enabled: true }]),
             ),
@@ -149,7 +208,15 @@ function createStartupConfig(params: {
               allow: params.allowPluginIds,
             },
           }
-        : {}),
+        : params.memorySlot
+          ? {
+              plugins: {
+                slots: {
+                  memory: params.memorySlot,
+                },
+              },
+            }
+          : {}),
     ...(params.providerIds?.length
       ? {
           models: {
@@ -170,13 +237,50 @@ function createStartupConfig(params: {
           agents: {
             defaults: {
               model: { primary: params.modelId },
+              ...(params.embeddedHarnessRuntime
+                ? {
+                    embeddedHarness: {
+                      runtime: params.embeddedHarnessRuntime,
+                      fallback: "none",
+                    },
+                  }
+                : {}),
               models: {
                 [params.modelId]: {},
               },
             },
+            ...(params.agentEmbeddedHarnessRuntimes?.length
+              ? {
+                  list: params.agentEmbeddedHarnessRuntimes.map((runtime, index) => ({
+                    id: `agent-${index + 1}`,
+                    embeddedHarness: { runtime },
+                  })),
+                }
+              : {}),
           },
         }
-      : {}),
+      : params.embeddedHarnessRuntime || params.agentEmbeddedHarnessRuntimes?.length
+        ? {
+            agents: {
+              defaults: params.embeddedHarnessRuntime
+                ? {
+                    embeddedHarness: {
+                      runtime: params.embeddedHarnessRuntime,
+                      fallback: "none",
+                    },
+                  }
+                : {},
+              ...(params.agentEmbeddedHarnessRuntimes?.length
+                ? {
+                    list: params.agentEmbeddedHarnessRuntimes.map((runtime, index) => ({
+                      id: `agent-${index + 1}`,
+                      embeddedHarness: { runtime },
+                    })),
+                  }
+                : {}),
+            },
+          }
+        : {}),
   } as OpenClawConfig;
 }
 
@@ -187,6 +291,12 @@ describe("resolveGatewayStartupPluginIds", () => {
         return Object.keys(config.channels ?? {});
       }
       return ["demo-channel"];
+    });
+    hasPotentialConfiguredChannels.mockReset().mockImplementation((config: OpenClawConfig) => {
+      if (Object.prototype.hasOwnProperty.call(config, "channels")) {
+        return Object.keys(config.channels ?? {}).length > 0;
+      }
+      return true;
     });
     loadPluginManifestRegistry.mockReset().mockReturnValue(createManifestRegistryFixture());
   });
@@ -250,6 +360,9 @@ describe("resolveGatewayStartupPluginIds", () => {
           "voice-call": {
             enabled: true,
           },
+          "memory-core": {
+            enabled: true,
+          },
         },
       },
     } as OpenClawConfig;
@@ -261,74 +374,236 @@ describe("resolveGatewayStartupPluginIds", () => {
     });
   });
 
-  it("includes memory-core at startup when dreaming is enabled", () => {
+  it("includes the explicitly selected memory slot plugin in startup scope", () => {
     expectStartupPluginIdsCase({
-      config: {
-        channels: {},
-        plugins: {
-          entries: {
-            "memory-core": {
-              enabled: true,
-              config: {
-                dreaming: {
-                  enabled: true,
-                },
-              },
-            },
-          },
-        },
-      } as OpenClawConfig,
-      expected: ["browser", "memory-core"],
+      config: createStartupConfig({
+        enabledPluginIds: ["memory-lancedb"],
+        memorySlot: "memory-lancedb",
+      }),
+      expected: ["demo-channel", "browser", "memory-lancedb"],
     });
   });
 
-  it("includes the selected memory-slot plugin and memory-core when dreaming is enabled", () => {
+  it("normalizes the raw memory slot id before startup filtering", () => {
     expectStartupPluginIdsCase({
-      config: {
-        plugins: {
-          slots: {
-            memory: "memory-lancedb",
-          },
-          entries: {
-            "memory-core": {
-              enabled: true,
-            },
-            "memory-lancedb": {
-              enabled: true,
-              config: {
-                dreaming: {
-                  enabled: true,
-                },
-              },
-            },
-          },
-        },
-      } as OpenClawConfig,
-      expected: ["demo-channel", "browser", "memory-core", "memory-lancedb"],
+      config: createStartupConfig({
+        enabledPluginIds: ["memory-core"],
+        memorySlot: "Memory-Core",
+      }),
+      expected: ["demo-channel", "browser", "memory-core"],
     });
   });
 
-  it("does not bypass activation policy for dreaming startup owners", () => {
+  it("does not include non-selected memory plugins only because they are enabled", () => {
+    expectStartupPluginIdsCase({
+      config: createStartupConfig({
+        enabledPluginIds: ["memory-lancedb"],
+      }),
+      expected: ["demo-channel", "browser"],
+    });
+  });
+
+  it("includes required agent harness owner plugins when the default runtime is forced", () => {
+    expectStartupPluginIdsCase({
+      config: createStartupConfig({
+        embeddedHarnessRuntime: "codex",
+        enabledPluginIds: ["codex"],
+      }),
+      expected: ["demo-channel", "browser", "codex"],
+    });
+  });
+
+  it("includes required agent harness owner plugins when an agent override forces the runtime", () => {
+    expectStartupPluginIdsCase({
+      config: createStartupConfig({
+        agentEmbeddedHarnessRuntimes: ["codex"],
+        enabledPluginIds: ["codex"],
+      }),
+      expected: ["demo-channel", "browser", "codex"],
+    });
+  });
+
+  it("includes required agent harness owner plugins when env forces the runtime", () => {
+    expectStartupPluginIdsCase({
+      config: createStartupConfig({
+        enabledPluginIds: ["codex"],
+      }),
+      env: { OPENCLAW_AGENT_RUNTIME: "codex" },
+      expected: ["demo-channel", "browser", "codex"],
+    });
+  });
+
+  it("does not include required agent harness owner plugins when they are explicitly disabled", () => {
     expectStartupPluginIdsCase({
       config: {
-        channels: {},
-        plugins: {
-          slots: {
-            memory: "memory-lancedb",
+        agents: {
+          defaults: {
+            embeddedHarness: {
+              runtime: "codex",
+              fallback: "none",
+            },
           },
+        },
+        plugins: {
           entries: {
-            "memory-lancedb": {
+            codex: {
               enabled: false,
-              config: {
-                dreaming: {
-                  enabled: true,
-                },
-              },
             },
           },
         },
       } as OpenClawConfig,
-      expected: ["browser"],
+      expected: ["demo-channel", "browser"],
     });
+  });
+});
+
+describe("resolveConfiguredChannelPluginIds", () => {
+  beforeEach(() => {
+    listPotentialConfiguredChannelIds.mockReset().mockImplementation((config: OpenClawConfig) => {
+      if (Object.prototype.hasOwnProperty.call(config, "channels")) {
+        return Object.keys(config.channels ?? {});
+      }
+      return [];
+    });
+    hasPotentialConfiguredChannels.mockReset().mockImplementation((config: OpenClawConfig) => {
+      if (Object.prototype.hasOwnProperty.call(config, "channels")) {
+        return Object.keys(config.channels ?? {}).length > 0;
+      }
+      return false;
+    });
+    loadPluginManifestRegistry.mockReset().mockReturnValue(createManifestRegistryFixture());
+  });
+
+  it("uses manifest activation channel ownership before falling back to direct channel lists", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: createStartupConfig({
+          channelIds: ["activation-only-channel"],
+        }),
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual(["activation-only-channel-plugin"]);
+  });
+
+  it("keeps bundled activation owners behind restrictive allowlists", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: createStartupConfig({
+          channelIds: ["activation-only-channel"],
+          allowPluginIds: ["browser"],
+        }),
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("blocks bundled activation owners when explicitly denied", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: {
+          channels: {
+            "activation-only-channel": { enabled: true },
+          },
+          plugins: {
+            deny: ["activation-only-channel-plugin"],
+          },
+        } as OpenClawConfig,
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("blocks bundled activation owners when plugins are globally disabled", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: {
+          channels: {
+            "activation-only-channel": { enabled: true },
+          },
+          plugins: {
+            enabled: false,
+          },
+        } as OpenClawConfig,
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("filters untrusted workspace activation owners from configured-channel runtime planning", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: createStartupConfig({
+          channelIds: ["workspace-activation-channel"],
+        }),
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("filters untrusted global activation owners from configured-channel runtime planning", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: createStartupConfig({
+          channelIds: ["global-activation-channel"],
+        }),
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps explicitly enabled global activation owners eligible for configured-channel runtime planning", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: createStartupConfig({
+          channelIds: ["global-activation-channel"],
+          enabledPluginIds: ["global-activation-channel-plugin"],
+        }),
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual(["global-activation-channel-plugin"]);
+  });
+
+  it("does not treat auto-enabled non-bundled channel owners as explicitly trusted", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: createStartupConfig({
+          channelIds: ["global-activation-channel"],
+          enabledPluginIds: ["global-activation-channel-plugin"],
+        }),
+        activationSourceConfig: createStartupConfig({
+          channelIds: ["global-activation-channel"],
+        }),
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
+  });
+
+  it("blocks bundled activation owners when explicitly disabled", () => {
+    expect(
+      resolveConfiguredChannelPluginIds({
+        config: {
+          channels: {
+            "activation-only-channel": { enabled: true },
+          },
+          plugins: {
+            entries: {
+              "activation-only-channel-plugin": {
+                enabled: false,
+              },
+            },
+          },
+        } as OpenClawConfig,
+        workspaceDir: "/tmp",
+        env: process.env,
+      }),
+    ).toEqual([]);
   });
 });

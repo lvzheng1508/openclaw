@@ -1,8 +1,12 @@
 import { defineProject } from "vitest/config";
 import { loadPatternListFromEnv, narrowIncludePatternsForCli } from "./vitest.pattern-file.ts";
 import { resolveVitestIsolation } from "./vitest.scoped-config.ts";
-import { sharedVitestConfig } from "./vitest.shared.config.ts";
-import { unitFastTestFiles } from "./vitest.unit-fast-paths.mjs";
+import {
+  nonIsolatedRunnerPath,
+  resolveRepoRootPath,
+  sharedVitestConfig,
+} from "./vitest.shared.config.ts";
+import { getUnitFastTestFiles } from "./vitest.unit-fast-paths.mjs";
 import {
   isBundledPluginDependentUnitTestFile,
   unitTestAdditionalExcludePatterns,
@@ -34,6 +38,7 @@ export function createUnitVitestConfigWithOptions(
   } = {},
 ) {
   const isolate = resolveVitestIsolation(env);
+  const unitFastTestFiles = getUnitFastTestFiles();
   const defaultIncludePatterns = options.includePatterns ?? unitTestIncludePatterns;
   const cliIncludePatterns = narrowIncludePatternsForCli(defaultIncludePatterns, options.argv);
   const protectedIncludeFiles = new Set(
@@ -51,9 +56,13 @@ export function createUnitVitestConfigWithOptions(
       ...sharedTest,
       name: options.name ?? "unit",
       isolate,
-      ...(isolate ? { runner: undefined } : { runner: "./test/non-isolated-runner.ts" }),
+      ...(isolate ? { runner: undefined } : { runner: nonIsolatedRunnerPath }),
       setupFiles: [
-        ...new Set([...(sharedTest.setupFiles ?? []), "test/setup-openclaw-runtime.ts"]),
+        ...new Set(
+          [...(sharedTest.setupFiles ?? []), "test/setup-openclaw-runtime.ts"].map(
+            resolveRepoRootPath,
+          ),
+        ),
       ],
       include: loadIncludePatternsFromEnv(env) ?? cliIncludePatterns ?? defaultIncludePatterns,
       exclude: [
