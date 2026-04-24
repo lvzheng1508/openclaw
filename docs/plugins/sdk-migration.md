@@ -1,15 +1,13 @@
 ---
-title: "Plugin SDK Migration"
-sidebarTitle: "Migrate to SDK"
 summary: "Migrate from the legacy backwards-compatibility layer to the modern plugin SDK"
+title: "Plugin SDK migration"
+sidebarTitle: "Migrate to SDK"
 read_when:
   - You see the OPENCLAW_PLUGIN_SDK_COMPAT_DEPRECATED warning
   - You see the OPENCLAW_EXTENSION_API_DEPRECATED warning
   - You are updating a plugin to the modern plugin architecture
   - You maintain an external OpenClaw plugin
 ---
-
-# Plugin SDK Migration
 
 OpenClaw has moved from a broad backwards-compatibility layer to a modern plugin
 architecture with focused, documented imports. If your plugin was built before
@@ -202,12 +200,12 @@ Current bundled provider examples:
   | `plugin-sdk/channel-config-schema` | Config schema builders | Channel config schema types |
   | `plugin-sdk/telegram-command-config` | Telegram command config helpers | Command-name normalization, description trimming, duplicate/conflict validation |
   | `plugin-sdk/channel-policy` | Group/DM policy resolution | `resolveChannelGroupRequireMention` |
-  | `plugin-sdk/channel-lifecycle` | Account status tracking | `createAccountStatusSink` |
+  | `plugin-sdk/channel-lifecycle` | Account status and draft stream lifecycle helpers | `createAccountStatusSink`, draft preview finalization helpers |
   | `plugin-sdk/inbound-envelope` | Inbound envelope helpers | Shared route + envelope builder helpers |
   | `plugin-sdk/inbound-reply-dispatch` | Inbound reply helpers | Shared record-and-dispatch helpers |
   | `plugin-sdk/messaging-targets` | Messaging target parsing | Target parsing/matching helpers |
   | `plugin-sdk/outbound-media` | Outbound media helpers | Shared outbound media loading |
-  | `plugin-sdk/outbound-runtime` | Outbound runtime helpers | Outbound identity/send delegate helpers |
+  | `plugin-sdk/outbound-runtime` | Outbound runtime helpers | Outbound identity/send delegate and payload planning helpers |
   | `plugin-sdk/thread-bindings-runtime` | Thread-binding helpers | Thread-binding lifecycle and adapter helpers |
   | `plugin-sdk/agent-media-payload` | Legacy media payload helpers | Agent media payload builder for legacy field layouts |
   | `plugin-sdk/channel-runtime` | Deprecated compatibility shim | Legacy channel runtime utilities only |
@@ -275,11 +273,12 @@ Current bundled provider examples:
   | `plugin-sdk/provider-auth-api-key` | Provider API-key setup helpers | API-key onboarding/profile-write helpers |
   | `plugin-sdk/provider-auth-result` | Provider auth-result helpers | Standard OAuth auth-result builder |
   | `plugin-sdk/provider-auth-login` | Provider interactive login helpers | Shared interactive login helpers |
+  | `plugin-sdk/provider-selection-runtime` | Provider selection helpers | Configured-or-auto provider selection and raw provider config merging |
   | `plugin-sdk/provider-env-vars` | Provider env-var helpers | Provider auth env-var lookup helpers |
   | `plugin-sdk/provider-model-shared` | Shared provider model/replay helpers | `ProviderReplayFamily`, `buildProviderReplayFamilyHooks`, `normalizeModelCompat`, shared replay-policy builders, provider-endpoint helpers, and model-id normalization helpers |
   | `plugin-sdk/provider-catalog-shared` | Shared provider catalog helpers | `findCatalogTemplate`, `buildSingleProviderApiKeyCatalog`, `supportsNativeStreamingUsageCompat`, `applyProviderNativeStreamingUsageCompat` |
   | `plugin-sdk/provider-onboard` | Provider onboarding patches | Onboarding config helpers |
-  | `plugin-sdk/provider-http` | Provider HTTP helpers | Generic provider HTTP/endpoint capability helpers |
+  | `plugin-sdk/provider-http` | Provider HTTP helpers | Generic provider HTTP/endpoint capability helpers, including audio transcription multipart form helpers |
   | `plugin-sdk/provider-web-fetch` | Provider web-fetch helpers | Web-fetch provider registration/cache helpers |
   | `plugin-sdk/provider-web-search-config-contract` | Provider web-search config helpers | Narrow web-search config/credential helpers for providers that do not need plugin-enable wiring |
   | `plugin-sdk/provider-web-search-contract` | Provider web-search contract helpers | Narrow web-search config/credential contract helpers such as `createWebSearchProviderContractFields`, `enablePluginInConfig`, `resolveProviderWebSearchPluginConfig`, and scoped credential setters/getters |
@@ -287,6 +286,7 @@ Current bundled provider examples:
   | `plugin-sdk/provider-tools` | Provider tool/schema compat helpers | `ProviderToolCompatFamily`, `buildProviderToolCompatFamilyHooks`, Gemini schema cleanup + diagnostics, and xAI compat helpers such as `resolveXaiModelCompatPatch` / `applyXaiModelCompat` |
   | `plugin-sdk/provider-usage` | Provider usage helpers | `fetchClaudeUsage`, `fetchGeminiUsage`, `fetchGithubCopilotUsage`, and other provider usage helpers |
   | `plugin-sdk/provider-stream` | Provider stream wrapper helpers | `ProviderStreamFamily`, `buildProviderStreamFamilyHooks`, `composeProviderStreamWrappers`, stream wrapper types, and shared Anthropic/Bedrock/Google/Kilocode/Moonshot/OpenAI/OpenRouter/Z.A.I/MiniMax/Copilot wrapper helpers |
+  | `plugin-sdk/provider-transport-runtime` | Provider transport helpers | Native provider transport helpers such as guarded fetch, transport message transforms, and writable transport event streams |
   | `plugin-sdk/keyed-async-queue` | Ordered async queue | `KeyedAsyncQueue` |
   | `plugin-sdk/media-runtime` | Shared media helpers | Media fetch/transform/store helpers plus media payload builders |
   | `plugin-sdk/media-generation-runtime` | Shared media-generation helpers | Shared failover helpers, candidate selection, and missing-model messaging for image/video/music generation |
@@ -295,8 +295,8 @@ Current bundled provider examples:
   | `plugin-sdk/text-chunking` | Text chunking helpers | Outbound text chunking helper |
   | `plugin-sdk/speech` | Speech helpers | Speech provider types plus provider-facing directive, registry, and validation helpers |
   | `plugin-sdk/speech-core` | Shared speech core | Speech provider types, registry, directives, normalization |
-  | `plugin-sdk/realtime-transcription` | Realtime transcription helpers | Provider types and registry helpers |
-  | `plugin-sdk/realtime-voice` | Realtime voice helpers | Provider types and registry helpers |
+  | `plugin-sdk/realtime-transcription` | Realtime transcription helpers | Provider types, registry helpers, and shared WebSocket session helper |
+  | `plugin-sdk/realtime-voice` | Realtime voice helpers | Provider types, registry/resolution helpers, and bridge session helpers |
   | `plugin-sdk/image-generation-core` | Shared image-generation core | Image-generation types, failover, auth, and registry helpers |
   | `plugin-sdk/music-generation` | Music-generation helpers | Music-generation provider/request/result types |
   | `plugin-sdk/music-generation-core` | Shared music-generation core | Music-generation types, failover helpers, provider lookup, and model-ref parsing |

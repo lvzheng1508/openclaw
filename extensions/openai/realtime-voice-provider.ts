@@ -15,6 +15,7 @@ import { normalizeResolvedSecretInputString } from "openclaw/plugin-sdk/secret-i
 import WebSocket from "ws";
 import {
   asFiniteNumber,
+  captureOpenAIRealtimeWsClose,
   readRealtimeErrorDetail,
   resolveOpenAIProviderConfigRecord,
   trimToUndefined,
@@ -116,13 +117,14 @@ function base64ToBuffer(b64: string): Buffer {
 }
 
 class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
-  private static readonly DEFAULT_MODEL = "gpt-realtime";
+  private static readonly DEFAULT_MODEL = "gpt-realtime-1.5";
   private static readonly MAX_RECONNECT_ATTEMPTS = 5;
   private static readonly BASE_RECONNECT_DELAY_MS = 1000;
   private static readonly CONNECT_TIMEOUT_MS = 10_000;
 
   private ws: WebSocket | null = null;
   private connected = false;
+  private sessionConfigured = false;
   private intentionallyClosed = false;
   private reconnectAttempts = 0;
   private pendingAudio: Buffer[] = [];
@@ -132,6 +134,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
   private lastAssistantItemId: string | null = null;
   private toolCallBuffers = new Map<string, { name: string; callId: string; args: string }>();
   private readonly flowId = randomUUID();
+  private sessionReadyFired = false;
 
   constructor(private readonly config: OpenAIRealtimeVoiceBridgeConfig) {}
 
@@ -142,7 +145,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
   }
 
   sendAudio(audio: Buffer): void {
-    if (!this.connected || this.ws?.readyState !== WebSocket.OPEN) {
+    if (!this.connected || !this.sessionConfigured || this.ws?.readyState !== WebSocket.OPEN) {
       if (this.pendingAudio.length < 320) {
         this.pendingAudio.push(audio);
       }
@@ -171,7 +174,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
   }
 
   triggerGreeting(instructions?: string): void {
-    if (!this.connected || !this.ws) {
+    if (!this.isConnected() || !this.ws) {
       return;
     }
     this.sendEvent({
@@ -208,6 +211,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
   close(): void {
     this.intentionallyClosed = true;
     this.connected = false;
+    this.sessionConfigured = false;
     if (this.ws) {
       this.ws.close(1000, "Bridge closed");
       this.ws = null;
@@ -215,11 +219,29 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
   }
 
   isConnected(): boolean {
-    return this.connected;
+    return this.connected && this.sessionConfigured;
   }
 
   private async doConnect(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      let connectTimeout: ReturnType<typeof setTimeout>;
+      let settled = false;
+      const settleResolve = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(connectTimeout);
+        resolve();
+      };
+      const settleReject = (error: Error) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        clearTimeout(connectTimeout);
+        reject(error);
+      };
       const { url, headers } = this.resolveConnectionParams();
       const debugProxy = resolveDebugProxySettings();
       const proxyAgent = createDebugProxyWebSocketAgent(debugProxy);
@@ -228,13 +250,16 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
         ...(proxyAgent ? { agent: proxyAgent } : {}),
       });
 
-      const connectTimeout = setTimeout(() => {
-        reject(new Error("OpenAI realtime connection timeout"));
+      connectTimeout = setTimeout(() => {
+        if (!this.connected && !this.intentionallyClosed) {
+          this.ws?.terminate();
+          settleReject(new Error("OpenAI realtime connection timeout"));
+        }
       }, OpenAIRealtimeVoiceBridge.CONNECT_TIMEOUT_MS);
 
       this.ws.on("open", () => {
-        clearTimeout(connectTimeout);
         this.connected = true;
+        this.sessionConfigured = false;
         this.reconnectAttempts = 0;
         captureWsEvent({
           url,
@@ -247,11 +272,7 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
           },
         });
         this.sendSessionUpdate();
-        for (const chunk of this.pendingAudio.splice(0)) {
-          this.sendAudio(chunk);
-        }
-        this.config.onReady?.();
-        resolve();
+        settleResolve();
       });
 
       this.ws.on("message", (data: Buffer) => {
@@ -286,30 +307,23 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
           },
         });
         if (!this.connected) {
-          clearTimeout(connectTimeout);
-          reject(error);
+          settleReject(error instanceof Error ? error : new Error(String(error)));
         }
         this.config.onError?.(error instanceof Error ? error : new Error(String(error)));
       });
 
       this.ws.on("close", (code, reasonBuffer) => {
-        captureWsEvent({
+        captureOpenAIRealtimeWsClose({
           url,
-          direction: "local",
-          kind: "ws-close",
           flowId: this.flowId,
-          closeCode: typeof code === "number" ? code : undefined,
-          meta: {
-            provider: "openai",
-            capability: "realtime-voice",
-            reason:
-              Buffer.isBuffer(reasonBuffer) && reasonBuffer.length > 0
-                ? reasonBuffer.toString("utf8")
-                : undefined,
-          },
+          capability: "realtime-voice",
+          code,
+          reasonBuffer,
         });
         this.connected = false;
+        this.sessionConfigured = false;
         if (this.intentionallyClosed) {
+          settleResolve();
           this.config.onClose?.("completed");
           return;
         }
@@ -413,6 +427,20 @@ class OpenAIRealtimeVoiceBridge implements RealtimeVoiceBridge {
 
   private handleEvent(event: RealtimeEvent): void {
     switch (event.type) {
+      case "session.created":
+        return;
+
+      case "session.updated":
+        this.sessionConfigured = true;
+        for (const chunk of this.pendingAudio.splice(0)) {
+          this.sendAudio(chunk);
+        }
+        if (!this.sessionReadyFired) {
+          this.sessionReadyFired = true;
+          this.config.onReady?.();
+        }
+        return;
+
       case "response.audio.delta": {
         if (!event.delta) {
           return;

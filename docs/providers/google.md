@@ -1,12 +1,10 @@
 ---
-title: "Google (Gemini)"
 summary: "Google Gemini setup (API key + OAuth, image generation, media understanding, TTS, web search)"
+title: "Google (Gemini)"
 read_when:
   - You want to use Google Gemini models with OpenClaw
   - You need the API key or OAuth auth flow
 ---
-
-# Google (Gemini)
 
 The Google plugin provides access to Gemini models through Google AI Studio, plus
 image generation, media understanding (image/audio/video), text-to-speech, and web search via
@@ -128,20 +126,25 @@ Choose your preferred auth method and follow the setup steps.
 
 ## Capabilities
 
-| Capability             | Supported         |
-| ---------------------- | ----------------- |
-| Chat completions       | Yes               |
-| Image generation       | Yes               |
-| Music generation       | Yes               |
-| Text-to-speech         | Yes               |
-| Image understanding    | Yes               |
-| Audio transcription    | Yes               |
-| Video understanding    | Yes               |
-| Web search (Grounding) | Yes               |
-| Thinking/reasoning     | Yes (Gemini 3.1+) |
-| Gemma 4 models         | Yes               |
+| Capability             | Supported                     |
+| ---------------------- | ----------------------------- |
+| Chat completions       | Yes                           |
+| Image generation       | Yes                           |
+| Music generation       | Yes                           |
+| Text-to-speech         | Yes                           |
+| Image understanding    | Yes                           |
+| Audio transcription    | Yes                           |
+| Video understanding    | Yes                           |
+| Web search (Grounding) | Yes                           |
+| Thinking/reasoning     | Yes (Gemini 2.5+ / Gemini 3+) |
+| Gemma 4 models         | Yes                           |
 
 <Tip>
+Gemini 3 models use `thinkingLevel` rather than `thinkingBudget`. OpenClaw maps
+Gemini 3, Gemini 3.1, and `gemini-*-latest` alias reasoning controls to
+`thinkingLevel` so default/low-latency runs do not send disabled
+`thinkingBudget` values.
+
 Gemma 4 models (for example `gemma-4-26b-a4b-it`) support thinking mode. OpenClaw
 rewrites `thinkingBudget` to a supported Google `thinkingLevel` for Gemma 4.
 Setting thinking to `off` preserves thinking disabled instead of mapping to
