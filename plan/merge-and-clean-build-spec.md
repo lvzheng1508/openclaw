@@ -60,6 +60,24 @@ myclaw run
 
 ---
 
+## 核心流程 4：源码直跑模式 (极速验证)
+
+**适用场景**：只想最快看到代码改动效果，不想等待任何后端构建步骤。
+
+```bash
+# 1. 同步代码
+git fetch upstream && git merge upstream/main
+pnpm install
+
+# 2. 仅构建 UI (Dashboard 必须)
+pnpm ui:build
+
+# 3. 直接从源码启动
+pnpm openclaw gateway --verbose
+```
+
+---
+
 ## 💡 常见问题处理
 
 ### 1. 合并被阻挡 (a2ui 文件冲突)
