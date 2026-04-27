@@ -1,4 +1,4 @@
-import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-types";
 import type { RuntimeEnv } from "openclaw/plugin-sdk/runtime-env";
 import type { Mock } from "vitest";
 import { expect, vi } from "vitest";
@@ -470,6 +470,7 @@ vi.mock(buildDiscordSourceModuleId("monitor/exec-approvals.js"), () => ({
 
 vi.mock(buildDiscordSourceModuleId("monitor/gateway-plugin.js"), () => ({
   createDiscordGatewayPlugin: () => ({ id: "gateway-plugin" }),
+  waitForDiscordGatewayPluginRegistration: () => undefined,
 }));
 
 vi.mock(buildDiscordSourceModuleId("monitor/listeners.js"), () => ({
