@@ -86,17 +86,38 @@ git push origin main
 
 ---
 
-## 7. 全量构建与 UI 构建（可选，仅需验证或运行时执行）
+## 7. 运行验证模式 (本地运行)
 
-若仅为更新代码，**可完全跳过此步**。全量构建较为耗时：
+如果需要立即运行最新的代码，可以根据需求选择不同的构建/运行方式：
+
+### A. 快速验证模式 (推荐，直接运行源码)
+
+直接运行 `src/` 下的 TS 源码，**完全跳过后端编译步骤**，能确保运行的是最新代码且避开 `dist/` 缓存干扰。
+
+```bash
+pnpm install
+pnpm ui:build      # 必须执行一次，UI 是静态服务
+pnpm openclaw gateway --verbose
+```
+
+### B. 最小化运行时构建 (快速)
+
+仅构建 Gateway 运行必须的核心产物，比全量 build 快很多：
+
+```bash
+node scripts/build-all.mjs gatewayWatch
+pnpm ui:build
+```
+
+### C. 全量生产构建 (耗时)
 
 ```bash
 pnpm build
 pnpm ui:build
 ```
 
-- `pnpm build`：对应 `scripts/build-all.mjs` 的 **full** 流程，包括打 A2UI bundle、tsdown、runtime postbuild 等。
-- `pnpm ui:build`：在 `ui/` 下执行 Vite 生产构建，产物输出到 `dist/control-ui/`。
+> [!TIP]
+> 若怀疑有残留缓存，可执行 `rm -rf dist/` 彻底清理旧产物后再构建。
 
 ---
 
@@ -132,7 +153,14 @@ pnpm install
 git push origin main
 ```
 
-**本地运行所需的构建（按需执行）：**
+**同步后快速运行 (推荐)：**
+
+```bash
+pnpm ui:build
+pnpm openclaw gateway
+```
+
+**本地全量构建 (按需)：**
 
 ```bash
 pnpm build && pnpm ui:build
