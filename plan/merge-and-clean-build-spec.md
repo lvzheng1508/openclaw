@@ -144,23 +144,32 @@ git restore vendor/a2ui/renderers/angular/package-lock.json vendor/a2ui/renderer
 
 ## 参考命令速览
 
-**日常同步更新（推荐）：**
+**日常同步更新 (在主力开发机上执行)：**
 
 ```bash
 git fetch upstream && git merge upstream/main
-# 若被生成物阻挡：rm -f src/canvas-host/a2ui/.bundle.hash src/canvas-host/a2ui/a2ui.bundle.js 后重试 merge
+# 若冲突：rm -f src/canvas-host/a2ui/.bundle.hash src/canvas-host/a2ui/a2ui.bundle.js 然后 merge
 pnpm install
 git push origin main
 ```
 
-**同步后快速运行 (推荐)：**
+**在其他机器上更新 (仅拉取已同步的代码)：**
 
 ```bash
-pnpm ui:build
-pnpm openclaw gateway
+git pull origin main
+pnpm install
 ```
 
-**本地全量构建 (按需)：**
+**同步后最小构建 (推荐，适配 myclaw run)：**
+
+```bash
+# 仅构建后端核心 + UI，避开全量 build 的耗时
+node scripts/build-all.mjs gatewayWatch && pnpm ui:build
+# 之后即可正常使用：
+myclaw run
+```
+
+**本地全量构建 (仅在需要发布或排查底层问题时执行)：**
 
 ```bash
 pnpm build && pnpm ui:build
