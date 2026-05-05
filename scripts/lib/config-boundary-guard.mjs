@@ -9,9 +9,7 @@ const COMPAT_CONFIG_API_FILES = new Set([
   "src/config/io.ts",
   "src/config/mutate.ts",
   "src/memory-host-sdk/runtime-core.ts",
-  "src/plugin-sdk/browser-config-runtime.ts",
   "src/plugin-sdk/config-runtime.ts",
-  "src/plugin-sdk/memory-core.ts",
   "src/plugin-sdk/memory-core-host-runtime-core.ts",
   "src/plugins/compat/registry.ts",
   "src/plugins/contracts/config-boundary-guard.test.ts",
@@ -30,6 +28,12 @@ const AMBIENT_RUNTIME_LOAD_CONFIG_COMPAT_FILES = new Set([
 const PROCESS_BOUNDARY_DIRECT_CONFIG_LOAD_FILES = new Set([
   "src/cli/banner-config-lite.ts",
   "src/cli/daemon-cli/status.gather.ts",
+]);
+
+const BROAD_CONFIG_RUNTIME_COMPAT_FILES = new Set([
+  "scripts/check-no-monolithic-plugin-sdk-entry-imports.ts",
+  "src/plugins/bundled-capability-runtime.test.ts",
+  "src/plugins/contracts/config-boundary-guard.test.ts",
 ]);
 
 function collectTypeScriptFiles(dir) {
@@ -176,6 +180,19 @@ function pushBroadConfigRuntimeBarrelViolations(violations, files) {
   }
 }
 
+function pushBroadConfigRuntimeSpecifierViolations(violations, files) {
+  const moduleSpecifierPattern = /["']openclaw\/plugin-sdk\/config-runtime["']/g;
+
+  for (const { filePath, relPath } of files) {
+    const source = readFileSync(filePath, "utf8");
+    for (const line of findMatchLineNumbers(source, moduleSpecifierPattern)) {
+      violations.push(
+        `${relPath}:${line} use narrow plugin-sdk config subpaths instead of openclaw/plugin-sdk/config-runtime`,
+      );
+    }
+  }
+}
+
 export function collectDeprecatedInternalConfigApiViolations({
   repoRoot = DEFAULT_REPO_ROOT,
 } = {}) {
@@ -205,7 +222,7 @@ export function collectDeprecatedInternalConfigApiViolations({
     const guards = [
       {
         pattern:
-          /\b(?:import|export)\s+(?:type\s+)?\{[^}]*\bloadConfig\b[^}]*\}\s+from\s+["']openclaw\/plugin-sdk\/(?:browser-config-runtime|config-runtime|memory-core-host-runtime-core)["']/,
+          /\b(?:import|export)\s+(?:type\s+)?\{[^}]*\bloadConfig\b[^}]*\}\s+from\s+["']openclaw\/plugin-sdk\/(?:config-runtime|memory-core-host-runtime-core)["']/,
         replacement:
           "use getRuntimeConfig(), runtime.config.current(), or pass the already loaded config",
       },
@@ -246,6 +263,13 @@ export function collectDeprecatedInternalConfigApiViolations({
         !relPath.startsWith("test/"),
     ),
   );
+  pushBroadConfigRuntimeSpecifierViolations(
+    violations,
+    repoFiles.filter(
+      ({ relPath }) =>
+        !isCompatConfigApiFile(relPath) && !BROAD_CONFIG_RUNTIME_COMPAT_FILES.has(relPath),
+    ),
+  );
 
   for (const { filePath, relPath } of repoFiles.filter(
     ({ relPath }) => !isCompatConfigApiFile(relPath),
@@ -254,13 +278,13 @@ export function collectDeprecatedInternalConfigApiViolations({
     const guards = [
       {
         pattern:
-          /\b(?:import|export)\s+(?:type\s+)?\{[\s\S]*?\b(?:loadConfig|writeConfigFile)\b[\s\S]*?\}\s+from\s+["']openclaw\/plugin-sdk\/(?:browser-config-runtime|config-runtime|memory-core-host-runtime-core|memory-core)["']/,
+          /\b(?:import|export)\s+(?:type\s+)?\{[\s\S]*?\b(?:loadConfig|writeConfigFile)\b[\s\S]*?\}\s+from\s+["']openclaw\/plugin-sdk\/(?:config-runtime|memory-core-host-runtime-core)["']/,
         replacement:
           "use getRuntimeConfig(), runtime.config.current(), or mutation helpers with afterWrite",
       },
       {
         pattern:
-          /ReturnType<typeof import\(["']openclaw\/plugin-sdk\/(?:browser-config-runtime|config-runtime|memory-core-host-runtime-core|memory-core)["']\)\.(?:loadConfig|writeConfigFile)>/,
+          /ReturnType<typeof import\(["']openclaw\/plugin-sdk\/(?:config-runtime|memory-core-host-runtime-core)["']\)\.(?:loadConfig|writeConfigFile)>/,
         replacement: "use OpenClawConfig or the explicit mutation helper type",
       },
     ];
@@ -354,7 +378,7 @@ export function collectDeprecatedInternalConfigApiViolations({
     );
   }
 
-  return violations;
+  return [...new Set(violations)];
 }
 
 const CHANNEL_EXTENSION_IDS = new Set([

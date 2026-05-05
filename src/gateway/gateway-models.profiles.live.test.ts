@@ -30,6 +30,7 @@ import { normalizeProviderId } from "../agents/model-selection.js";
 import { shouldSuppressBuiltInModel } from "../agents/model-suppression.js";
 import { ensureOpenClawModelsJson } from "../agents/models-config.js";
 import { isRateLimitErrorMessage } from "../agents/pi-embedded-helpers/errors.js";
+import { isBillingErrorMessage } from "../agents/pi-embedded-helpers/failover-matches.js";
 import { discoverAuthStorage, discoverModels } from "../agents/pi-model-discovery.js";
 import { STREAM_ERROR_FALLBACK_TEXT } from "../agents/stream-message-shared.js";
 import { clearRuntimeConfigSnapshot, getRuntimeConfig } from "../config/io.js";
@@ -49,7 +50,7 @@ import {
   shouldRetryToolReadProbe,
 } from "./live-tool-probe-utils.js";
 import { startGatewayServer } from "./server.impl.js";
-import { loadSessionEntry, readSessionMessages } from "./session-utils.js";
+import { loadSessionEntry, readSessionMessagesAsync } from "./session-utils.js";
 
 const ZAI_FALLBACK = isTruthyEnvValue(process.env.OPENCLAW_LIVE_GATEWAY_ZAI_FALLBACK);
 const REQUIRE_PROFILE_KEYS = isLiveProfileKeyModeEnabled();
@@ -84,6 +85,8 @@ const GATEWAY_LIVE_STRIP_SCAFFOLDING_MODEL_KEYS = new Set([
 ]);
 const GATEWAY_LIVE_EXEC_READ_NONCE_MISS_SKIP_MODEL_KEYS = new Set([
   "fireworks/accounts/fireworks/models/glm-5",
+  "fireworks/accounts/fireworks/models/kimi-k2p5",
+  "fireworks/accounts/fireworks/models/kimi-k2p6",
   "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
   "google/gemini-3.1-flash-lite-preview",
 ]);
@@ -503,6 +506,12 @@ describe("shouldSkipExecReadNonceMissForLiveModel", () => {
       shouldSkipExecReadNonceMissForLiveModel("fireworks/accounts/fireworks/models/glm-5"),
     ).toBe(true);
     expect(
+      shouldSkipExecReadNonceMissForLiveModel("fireworks/accounts/fireworks/models/kimi-k2p5"),
+    ).toBe(true);
+    expect(
+      shouldSkipExecReadNonceMissForLiveModel("fireworks/accounts/fireworks/models/kimi-k2p6"),
+    ).toBe(true);
+    expect(
       shouldSkipExecReadNonceMissForLiveModel(
         "fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
       ),
@@ -677,6 +686,7 @@ function shouldSkipToolNonceProbeMissForLiveModel(modelKey?: string): boolean {
     provider === "minimax" ||
     provider === "opencode" ||
     provider === "opencode-go" ||
+    provider === "openrouter" ||
     provider === "xai" ||
     provider === "zai"
   ) {
@@ -695,6 +705,7 @@ describe("shouldSkipToolNonceProbeMissForLiveModel", () => {
     { modelKey: "minimax/minimax-m1", expected: true },
     { modelKey: "opencode/big-pickle", expected: true },
     { modelKey: "opencode-go/glm-5", expected: true },
+    { modelKey: "openrouter/ai21/jamba-large-1.7", expected: true },
     { modelKey: "xai/grok-4.1-fast", expected: true },
     { modelKey: "zai/glm-5.1", expected: true },
     { modelKey: "google/gemini-3-flash-preview", expected: true },
@@ -1147,12 +1158,15 @@ function extractTranscriptMessageText(message: unknown): string {
     .trim();
 }
 
-function readSessionAssistantTexts(sessionKey: string, modelKey?: string): string[] {
+async function readSessionAssistantTexts(sessionKey: string, modelKey?: string): Promise<string[]> {
   const { storePath, entry } = loadSessionEntry(sessionKey);
   if (!entry?.sessionId) {
     return [];
   }
-  const messages = readSessionMessages(entry.sessionId, storePath, entry.sessionFile);
+  const messages = await readSessionMessagesAsync(entry.sessionId, storePath, entry.sessionFile, {
+    mode: "full",
+    reason: "live model assistant text verification",
+  });
   const assistantTexts: string[] = [];
   for (const message of messages) {
     if (!message || typeof message !== "object") {
@@ -1179,7 +1193,7 @@ async function waitForSessionAssistantText(params: {
   let lastHeartbeatAt = startedAt;
   let delayMs = 50;
   while (Date.now() - startedAt < GATEWAY_LIVE_PROBE_TIMEOUT_MS) {
-    const assistantTexts = readSessionAssistantTexts(params.sessionKey, params.modelKey);
+    const assistantTexts = await readSessionAssistantTexts(params.sessionKey, params.modelKey);
     if (assistantTexts.length > params.baselineAssistantCount) {
       const freshText = assistantTexts
         .slice(params.baselineAssistantCount)
@@ -1215,9 +1229,8 @@ async function requestGatewayAgentText(params: {
     content: string;
   }>;
 }) {
-  const baselineAssistantCount = readSessionAssistantTexts(
-    params.sessionKey,
-    params.modelKey,
+  const baselineAssistantCount = (
+    await readSessionAssistantTexts(params.sessionKey, params.modelKey)
   ).length;
   const accepted = await withGatewayLiveProbeTimeout(
     params.client.request("agent", {
@@ -1953,6 +1966,11 @@ async function runGatewayModelSuite(params: GatewayModelSuiteParams) {
           if (isGoogleishProvider(model.provider) && isRateLimitErrorMessage(message)) {
             skippedCount += 1;
             logProgress(`${progressLabel}: skip (google rate limit)`);
+            break;
+          }
+          if (isBillingErrorMessage(message)) {
+            skippedCount += 1;
+            logProgress(`${progressLabel}: skip (billing drift)`);
             break;
           }
           if (
