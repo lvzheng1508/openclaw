@@ -27,6 +27,7 @@ myclaw() {
       ;;
     stop)
       local pids
+      command myclaw gateway stop >/dev/null 2>&1 || true
       pids=$(lsof -tiTCP:18789 -sTCP:LISTEN 2>/dev/null)
       if [ -n "$pids" ]; then
         kill $pids 2>/dev/null || true
@@ -80,6 +81,8 @@ myclaw() {
 ---
 
 ## 2) 立即生效
+
+注意：每次修改完 `~/.zshrc` 后，当前终端不会自动加载新函数，必须执行下面命令，或者直接新开一个终端窗口。
 
 ```zsh
 source ~/.zshrc
