@@ -6,6 +6,10 @@ import { describe, expect, it } from "vitest";
 import { resolveCliBackendConfig, resolveCliBackendLiveTest } from "../agents/cli-backends.js";
 import { isLiveTestEnabled } from "../agents/live-test-helpers.js";
 import { parseModelRef } from "../agents/model-selection.js";
+import {
+  isAuthErrorMessage,
+  isBillingErrorMessage,
+} from "../agents/pi-embedded-helpers/failover-matches.js";
 import { clearRuntimeConfigSnapshot, type OpenClawConfig } from "../config/config.js";
 import { isTruthyEnvValue } from "../infra/env.js";
 import {
@@ -122,6 +126,11 @@ function isProviderCapacityError(error: unknown): boolean {
   );
 }
 
+function isProviderAccountDriftError(error: unknown): boolean {
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return isBillingErrorMessage(message) || isAuthErrorMessage(message);
+}
+
 async function requestWithProviderCapacityRetry<T>(
   providerId: string,
   label: string,
@@ -133,6 +142,10 @@ async function requestWithProviderCapacityRetry<T>(
       return await request();
     } catch (error) {
       if (!isProviderCapacityError(error) || attempt >= maxAttempts) {
+        if (isProviderAccountDriftError(error)) {
+          console.warn(`SKIP: ${label} skipped because provider account/auth drift blocked it.`);
+          return undefined;
+        }
         if (providerId === "claude-cli" && isProviderCapacityError(error)) {
           console.warn(`SKIP: ${label} skipped because Claude API stayed overloaded.`);
           return undefined;
@@ -461,11 +474,13 @@ describeLive("gateway live (cli backend)", () => {
           } else {
             expect(text).toContain(`CLI-BACKEND-${nonce}`);
           }
-          expect(
+          const injectedFileNames =
             resultWithMeta.meta?.systemPromptReport?.injectedWorkspaceFiles?.map(
               (entry) => entry.name,
-            ) ?? [],
-          ).toEqual(expect.arrayContaining(bootstrapWorkspace?.expectedInjectedFiles ?? []));
+            ) ?? [];
+          for (const expectedFile of bootstrapWorkspace?.expectedInjectedFiles ?? []) {
+            expect(injectedFileNames).toContain(expectedFile);
+          }
         }
 
         if (modelSwitchTarget) {
