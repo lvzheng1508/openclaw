@@ -1,109 +1,91 @@
-# OpenClaw 同步与构建指南 (SOP)
+# OpenClaw 同步指南
 
-本指南针对 `lvzheng` 的开发习惯定制，主要用于同步官方上游代码并确保 `myclaw run` 正常运行。
+从官方仓库更新代码到个人 Fork，保留 `plan/` 个人笔记。
+
+| 仓库 | 地址 | 用途 |
+|------|------|------|
+| upstream | https://github.com/openclaw/openclaw | 拉官方代码 |
+| origin | https://github.com/lvzheng1508/openclaw | 推送到自己的 Fork |
 
 ---
 
-## 核心流程 1：上游同步 + 全量构建
-
-**适用场景**：上游有重大更新（如底层依赖变动）、需要发布版本、或由于代码变动太大导致常规构建报错时。
+## 一次性配置
 
 ```bash
-# 1. 同步代码
-git fetch upstream && git merge upstream/main
-pnpm install
+git remote add upstream https://github.com/openclaw/openclaw.git   # 已配置可跳过
+git remote -v
+```
 
-# 2. 全量构建
-pnpm build && pnpm ui:build
+---
 
-# 3. 推送并运行
+## 日常同步（推荐）
+
+**只改 `plan/`，其余代码跟官方走。**
+
+```bash
+# 1. 拉官方最新代码并合并（不覆盖本地 commit 历史）
+git fetch upstream
+git merge upstream/main
+
+# 2. 推送到 Fork
 git push origin main
-myclaw run
 ```
+
+`plan/` 只在 Fork 里有，merge 不会动它。
 
 ---
 
-## 核心流程 2：上游同步 + 最小化构建 (推荐日常使用)
+## 合并冲突
 
-**适用场景**：快速获取上游新特性（如 DeepSeek V4 支持），仅构建运行 Gateway 必须的组件。
+不改业务代码，冲突一律用官方版本：
 
 ```bash
-# 1. 同步代码
-git fetch upstream && git merge upstream/main
-pnpm install
+# 查看冲突文件（plan/ 除外）
+git diff --name-only --diff-filter=U
 
-# 2. 最小化构建 (仅构建核心逻辑 + UI)
-node scripts/build-all.mjs gatewayWatch && pnpm ui:build
+# 单个文件用官方版本
+git checkout --theirs <文件路径>
+git add <文件路径>
 
-# 3. 推送并运行
+# 完成合并
+git commit
 git push origin main
-myclaw run
 ```
 
----
+常见：`pnpm-lock.yaml` 冲突时 `git checkout --theirs pnpm-lock.yaml && git add pnpm-lock.yaml`
 
-## 核心流程 3：多端同步 (其他机器更新)
-
-**适用场景**：已经在主力机同步并推送后，在其他机器（如笔记本、服务器）同步代码。
-
-```bash
-# 1. 拉取自己 Fork 的代码
-git pull origin main
-pnpm install
-
-# 2. 最小化构建
-node scripts/build-all.mjs gatewayWatch && pnpm ui:build
-
-# 3. 运行
-myclaw run
-```
-
----
-
-## 核心流程 4：源码直跑模式 (极速验证)
-
-**适用场景**：只想最快看到代码改动效果，不想等待任何后端构建步骤。
-
-```bash
-# 1. 同步代码
-git fetch upstream && git merge upstream/main
-pnpm install
-
-# 2. 仅构建 UI (Dashboard 必须)
-pnpm ui:build
-
-# 3. 直接从源码启动
-pnpm openclaw gateway --verbose
-```
-
----
-
-## 💡 常见问题处理
-
-### 1. 合并被阻挡 (a2ui 文件冲突)
-
-若执行 `git merge` 报错提示 `src/canvas-host/a2ui/` 下的文件将被覆盖，请先执行：
+a2ui 合并被挡时：
 
 ```bash
 rm -f src/canvas-host/a2ui/.bundle.hash src/canvas-host/a2ui/a2ui.bundle.js
+git merge upstream/main
 ```
 
-然后再重新尝试 `git merge`。
+---
 
-### 2. IDE (Cursor) 报错红线
-
-若 IDE 无法识别 SDK 的 API，请运行以下命令生成类型定义：
+## 同步后构建
 
 ```bash
-pnpm build:plugin-sdk:dts
+pnpm install
+node scripts/build-all.mjs gatewayWatch && pnpm ui:build   # 日常最小构建
+myclaw run
 ```
 
-然后执行 `TypeScript: Restart TS Server`。
-
-### 3. 彻底清理缓存
-
-若怀疑构建产物有问题，可先清理：
+全量构建（依赖大改或构建报错时）：
 
 ```bash
-rm -rf dist/
+pnpm build && pnpm ui:build
+```
+
+---
+
+## 其他机器
+
+主力机已 push 后：
+
+```bash
+git pull origin main
+pnpm install
+node scripts/build-all.mjs gatewayWatch && pnpm ui:build
+myclaw run
 ```
