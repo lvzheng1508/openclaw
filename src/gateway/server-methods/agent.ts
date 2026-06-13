@@ -1,3 +1,5 @@
+// Gateway agent methods implement agent.run, agent.wait, agent.reset, identity,
+// and related session-aware RPC handlers used by UI and operator clients.
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
@@ -21,12 +23,15 @@ import {
   validateAgentParams,
   validateAgentWaitParams,
 } from "../../../packages/gateway-protocol/src/index.js";
+import { readAcpSessionMeta } from "../../acp/runtime/session-meta.js";
 import { listAgentIds, resolveDefaultAgentId } from "../../agents/agent-scope.js";
 import { resolveTrustedGroupId } from "../../agents/agent-tools.policy.js";
 import {
   consumeExecApprovalFollowupRuntimeHandoff,
+  isExecApprovalFollowupSessionRebound,
   parseExecApprovalFollowupApprovalId,
 } from "../../agents/bash-tools.exec-approval-followup-state.js";
+import { clearAllCliSessions } from "../../agents/cli-session.js";
 import type { AgentCommandOpts } from "../../agents/command/types.js";
 import { isTimeoutError } from "../../agents/failover-error.js";
 import {
@@ -48,7 +53,9 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { agentCommandFromIngress } from "../../commands/agent.js";
 import {
   evaluateSessionFreshness,
+  hasTerminalMainSessionTranscriptNewerThanRegistrySync,
   mergeSessionEntry,
+  resolveTerminalMainSessionTranscriptRegistryCheck,
   resolveChannelResetConfig,
   resolveAgentIdFromSessionKey,
   resolveExplicitAgentSessionKey,
@@ -102,6 +109,7 @@ import {
   mergeDeliveryContext,
   normalizeDeliveryContext,
   normalizeSessionDeliveryFields,
+  type DeliveryContext,
 } from "../../utils/delivery-context.shared.js";
 import {
   INTERNAL_MESSAGE_CHANNEL,
@@ -142,7 +150,6 @@ import {
 } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import { waitForAgentJob } from "./agent-job.js";
-import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
 import {
   readTerminalSnapshotFromGatewayDedupe,
   setGatewayDedupeEntry,
@@ -415,6 +422,7 @@ async function resolveBareSessionResetResult(params: {
     cfg: params.cfg,
     agentId: params.agentId ?? resolveAgentIdFromSessionKey(params.sessionKey),
   });
+  // Main/global resets default to best-effort delivery because no caller session may remain.
   const bestEffortDeliver =
     typeof params.request.bestEffortDeliver === "boolean"
       ? params.request.bestEffortDeliver
@@ -505,6 +513,7 @@ function resolveTrustedGroupMetadata(params: {
   inherited?: TrustedGroupMetadata;
 }): TrustedGroupMetadata {
   return {
+    // Group trust can be inherited from the parent run or recovered from conversation-shaped keys.
     groupId:
       params.stored.groupId ??
       params.inherited?.groupId ??
@@ -521,6 +530,7 @@ function requestGroupMatchesTrusted(params: {
 }): boolean {
   const requestGroupId = params.requestGroupId?.trim();
   if (!requestGroupId) {
+    // Missing group metadata is accepted so non-group channels keep the same send path.
     return true;
   }
   return Boolean(params.trustedGroupId && requestGroupId === params.trustedGroupId);
@@ -545,6 +555,7 @@ function emitSessionsChanged(
           : undefined,
       )
     : null;
+  // Unscoped global updates must not leak one agent's goal into another agent's UI row.
   const omitUnscopedGlobalGoal = payload.sessionKey === "global" && !payload.agentId;
   context.broadcastToConnIds(
     "sessions.changed",
@@ -615,6 +626,52 @@ type GatewayAgentTaskTerminalStatus = Extract<
   TaskStatus,
   "succeeded" | "failed" | "timed_out" | "cancelled"
 >;
+type GatewayAgentTaskTrackingMode = "cli" | "plugin_subagent" | "none";
+
+function resolveGatewayAgentTaskTrackingMode(params: {
+  client: GatewayRequestHandlerOptions["client"];
+  sessionKey?: string;
+  inputProvenance?: InputProvenance;
+}): GatewayAgentTaskTrackingMode {
+  if (!params.sessionKey?.trim() || params.inputProvenance?.kind === "inter_session") {
+    return "none";
+  }
+  return params.client?.internal?.agentRunTracking === "plugin_subagent"
+    ? "plugin_subagent"
+    : "cli";
+}
+
+async function registerPluginSubagentRunFromGateway(params: {
+  cfg: OpenClawConfig;
+  runId: string;
+  childSessionKey: string;
+  task: string;
+  requesterOrigin?: DeliveryContext;
+  pluginId?: string;
+}): Promise<void> {
+  const childSessionKey = params.childSessionKey.trim();
+  if (!childSessionKey) {
+    return;
+  }
+  const ownerSessionKey = resolveAgentMainSessionKey({
+    cfg: params.cfg,
+    agentId: resolveAgentIdFromSessionKey(childSessionKey),
+  });
+  const { registerSubagentRun } = await import("../../agents/subagent-registry.js");
+  registerSubagentRun({
+    runId: params.runId,
+    childSessionKey,
+    controllerSessionKey: ownerSessionKey,
+    requesterSessionKey: ownerSessionKey,
+    requesterOrigin: params.requesterOrigin,
+    requesterDisplayKey: "main",
+    task: params.task,
+    cleanup: "keep",
+    ...(params.pluginId ? { label: `plugin:${params.pluginId}` } : {}),
+    expectsCompletionMessage: false,
+    spawnMode: "run",
+  });
+}
 
 function resolveFailedTrackedAgentTaskStatus(error: unknown): GatewayAgentTaskTerminalStatus {
   return isAbortError(error) || isTimeoutError(error) ? "timed_out" : "failed";
@@ -625,6 +682,7 @@ function tryFinalizeTrackedAgentTask(params: {
   status: GatewayAgentTaskTerminalStatus;
   error?: string;
   terminalSummary?: string;
+  log: Pick<GatewayRequestContext["logGateway"], "warn">;
 }): void {
   try {
     finalizeTaskRunByRunId({
@@ -635,8 +693,10 @@ function tryFinalizeTrackedAgentTask(params: {
       ...(params.error !== undefined ? { error: params.error } : {}),
       ...(params.terminalSummary !== undefined ? { terminalSummary: params.terminalSummary } : {}),
     });
-  } catch {
+  } catch (err) {
     // Best-effort only: background task tracking must not block agent runs.
+    // Still surface the swallowed error so non-transient finalize failures stay observable.
+    params.log.warn(`failed to finalize tracked agent task ${params.runId}: ${formatForLog(err)}`);
   }
 }
 
@@ -826,42 +886,49 @@ function dispatchAgentRunFromGateway(params: {
   abortController: AbortController;
   respond: GatewayRequestHandlerOptions["respond"];
   context: GatewayRequestHandlerOptions["context"];
+  taskTrackingMode: Exclude<GatewayAgentTaskTrackingMode, "plugin_subagent">;
 }) {
-  const inputProvenance = normalizeInputProvenance(params.ingressOpts.inputProvenance);
-  const shouldTrackTask =
-    params.ingressOpts.sessionKey?.trim() && inputProvenance?.kind !== "inter_session";
+  const shouldTrackTask = params.taskTrackingMode === "cli";
+  let taskTracked = false;
   if (shouldTrackTask) {
     try {
-      createRunningTaskRun({
-        runtime: "cli",
-        sourceId: params.runId,
-        ownerKey: params.ingressOpts.sessionKey,
-        scopeKind: "session",
-        requesterOrigin: normalizeDeliveryContext({
-          channel: params.ingressOpts.channel,
-          to: params.ingressOpts.to,
-          accountId: params.ingressOpts.accountId,
-          threadId: params.ingressOpts.threadId,
+      taskTracked = Boolean(
+        createRunningTaskRun({
+          runtime: "cli",
+          sourceId: params.runId,
+          ownerKey: params.ingressOpts.sessionKey,
+          scopeKind: "session",
+          requesterOrigin: normalizeDeliveryContext({
+            channel: params.ingressOpts.channel,
+            to: params.ingressOpts.to,
+            accountId: params.ingressOpts.accountId,
+            threadId: params.ingressOpts.threadId,
+          }),
+          childSessionKey: params.ingressOpts.sessionKey,
+          runId: params.runId,
+          task: params.ingressOpts.message,
+          deliveryStatus: "not_applicable",
+          startedAt: Date.now(),
         }),
-        childSessionKey: params.ingressOpts.sessionKey,
-        runId: params.runId,
-        task: params.ingressOpts.message,
-        deliveryStatus: "not_applicable",
-        startedAt: Date.now(),
-      });
-    } catch {
+      );
+    } catch (err) {
       // Best-effort only: background task tracking must not block agent runs.
+      // Still surface the swallowed error so non-transient tracking failures stay observable.
+      params.context.logGateway.warn(
+        `failed to start tracked agent task ${params.runId}: ${formatForLog(err)}`,
+      );
     }
   }
   void agentCommandFromIngress(params.ingressOpts, defaultRuntime, params.context.deps)
     .then((result) => {
       const aborted = result?.meta?.aborted === true;
       const timeoutAttribution = readAgentRunTimeoutAttribution(result?.meta);
-      if (shouldTrackTask) {
+      if (taskTracked) {
         tryFinalizeTrackedAgentTask({
           runId: params.runId,
           status: aborted ? "timed_out" : "succeeded",
           terminalSummary: aborted ? "aborted" : "completed",
+          log: params.context.logGateway,
         });
       }
       const payload = {
@@ -890,15 +957,16 @@ function dispatchAgentRunFromGateway(params: {
       // Swift clients will typically treat the first res as the result and ignore this.
       params.respond(true, payload, undefined, { runId: params.runId });
     })
-    .catch((err) => {
+    .catch((err: unknown) => {
       const aborted = isGatewayAgentAbortRejection(err, params.abortController.signal);
       const renderedErr = formatForLog(err);
-      if (shouldTrackTask) {
+      if (taskTracked) {
         tryFinalizeTrackedAgentTask({
           runId: params.runId,
           status: aborted ? "timed_out" : resolveFailedTrackedAgentTaskStatus(err),
           error: renderedErr,
           terminalSummary: renderedErr,
+          log: params.context.logGateway,
         });
       }
       const error = errorShape(ErrorCodes.UNAVAILABLE, renderedErr);
@@ -1003,6 +1071,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
       acpTurnSource?: "manual_spawn";
       internalRuntimeHandoffId?: string;
+      execApprovalFollowupExpectedSessionId?: string;
       internalEvents?: AgentInternalEvent[];
       suppressPromptPersistence?: boolean;
       sessionEffects?: "visible" | "internal";
@@ -1151,6 +1220,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             status: "accepted" as const,
             sessionKey,
             ...(dedupeSessionResolvesGlobal && dedupeAgentId ? { agentId: dedupeAgentId } : {}),
+            controlUiVisible: !suppressVisibleSessionEffects,
             acceptedAt,
             dedupeKeys: agentDedupeKeys,
             expiresAtMs: resolveAgentRunExpiresAtMs({
@@ -1241,6 +1311,44 @@ export const agentHandlers: GatewayRequestHandlers = {
         agentId = inferredAgentId;
       }
     }
+    // Drop an exec-approval followup whose session key was rebound by /new or
+    // /reset while the approval was pending, before the handler touches the
+    // rebound session (store write, run registration, dedupe, accepted ack).
+    if (execApprovalFollowupApprovalId && requestedSessionKeyRaw) {
+      const expectedSessionId = normalizeOptionalString(
+        request.execApprovalFollowupExpectedSessionId,
+      );
+      let currentSessionId: string | undefined;
+      try {
+        currentSessionId = normalizeOptionalString(
+          loadSessionEntry(requestedSessionKeyRaw).entry?.sessionId,
+        );
+      } catch {
+        currentSessionId = undefined;
+      }
+      if (
+        isExecApprovalFollowupSessionRebound({
+          expectedSessionId,
+          resolvedSessionId: currentSessionId,
+        })
+      ) {
+        context.logGateway.info(
+          `Dropping stale exec approval followup ${execApprovalFollowupApprovalId}: session ${requestedSessionKeyRaw} rebound (expected ${expectedSessionId}, current ${currentSessionId}) before the approval resolved`,
+        );
+        const droppedPayload = {
+          runId,
+          status: "ok" as const,
+          summary: "exec approval followup dropped: session was reset before the approval resolved",
+        };
+        setGatewayDedupeEntries({
+          dedupe: context.dedupe,
+          keys: agentDedupeKeys,
+          entry: { ts: Date.now(), ok: true, payload: droppedPayload },
+        });
+        respond(true, droppedPayload, undefined, { runId });
+        return;
+      }
+    }
     const requestedSessionId = normalizeOptionalString(request.sessionId);
     let requestedSessionKey =
       requestedSessionKeyRaw ??
@@ -1292,7 +1400,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       if (normalizedAttachments.length > 0) {
         let baseProvider: string | undefined;
         let baseModel: string | undefined;
-        let requestedSessionEntry: SessionEntry | undefined;
+        let requestedAcpMeta: ReturnType<typeof readAcpSessionMeta>;
         if (requestedSessionKeyRaw) {
           const {
             cfg: sessCfg,
@@ -1302,7 +1410,6 @@ export const agentHandlers: GatewayRequestHandlers = {
             ...(agentId ? { agentId } : {}),
             clone: false,
           });
-          requestedSessionEntry = sessEntry;
           const sessionAgentId =
             sessCanonicalKey === "global" && agentId
               ? agentId
@@ -1310,13 +1417,14 @@ export const agentHandlers: GatewayRequestHandlers = {
           const modelRef = resolveSessionModelRef(sessCfg, sessEntry, sessionAgentId);
           baseProvider = modelRef.provider;
           baseModel = modelRef.model;
+          requestedAcpMeta = readAcpSessionMeta({ sessionKey: sessCanonicalKey });
         }
         const effectiveProvider = providerOverride || baseProvider;
         const effectiveModel = modelOverride || baseModel;
         const isConfirmedAcpSession =
           request.acpTurnSource === "manual_spawn" &&
           isAcpSessionKey(requestedSessionKeyRaw) &&
-          requestedSessionEntry?.acp != null;
+          requestedAcpMeta != null;
         const supportsInlineImages = isConfirmedAcpSession
           ? true
           : await resolveGatewayModelSupportsImages({
@@ -1534,37 +1642,39 @@ export const agentHandlers: GatewayRequestHandlers = {
         }
       }
 
-      // Inject timestamp into user-authored messages that don't already have one.
-      // Channel messages (Discord, Telegram, etc.) get timestamps via envelope
-      // formatting in a separate code path — they never reach this handler.
+      // The per-message timestamp prefix is now applied at the single LLM
+      // boundary (normalizeMessagesForLlmBoundary), derived from each message's
+      // own timestamp, so the current turn and all historical turns carry
+      // identical bytes on the wire. The transient gateway injectTimestamp call
+      // is removed — stamping the live turn here would diverge from the bare
+      // stored history and bust the prompt cache.
       // See: https://github.com/openclaw/openclaw/issues/3658
-      if (!isRawModelRun && inputProvenance?.kind !== "inter_session") {
-        message = injectTimestamp(message, timestampOptsFromConfig(cfg));
-      }
 
       if (requestedSessionKey) {
         const sessionLoadOptions = {
           ...(agentId ? { agentId } : {}),
           clone: false,
         };
-        const { cfg, storePath, entry, canonicalKey } = loadSessionEntry(
-          requestedSessionKey,
-          sessionLoadOptions,
-        );
-        cfgForAgent = cfg;
+        const {
+          cfg: cfgLocal,
+          storePath,
+          entry,
+          canonicalKey,
+        } = loadSessionEntry(requestedSessionKey, sessionLoadOptions);
+        cfgForAgent = cfgLocal;
         const sessionMaintenanceConfig = resolveMaintenanceConfigFromInput(
-          cfg.session?.maintenance,
+          cfgLocal.session?.maintenance,
         );
         const canonicalSessionAgentId =
           canonicalKey === "global"
-            ? (agentId ?? resolveDefaultAgentId(cfg))
+            ? (agentId ?? resolveDefaultAgentId(cfgLocal))
             : resolveAgentIdFromSessionKey(canonicalKey);
         const now = Date.now();
         const resetPolicy = resolveSessionResetPolicy({
-          sessionCfg: cfg.session,
+          sessionCfg: cfgLocal.session,
           resetType: resolveSessionResetType({ sessionKey: canonicalKey }),
           resetOverride: resolveChannelResetConfig({
-            sessionCfg: cfg.session,
+            sessionCfg: cfgLocal.session,
             channel: entry?.lastChannel ?? entry?.channel ?? request.channel,
           }),
         });
@@ -1575,7 +1685,7 @@ export const agentHandlers: GatewayRequestHandlers = {
               agentId: canonicalSessionAgentId,
             })
           : undefined;
-        const freshness = entry
+        let freshness = entry
           ? evaluateSessionFreshness({
               updatedAt: entry.updatedAt,
               ...lifecycleTimestamps,
@@ -1583,25 +1693,62 @@ export const agentHandlers: GatewayRequestHandlers = {
               policy: resetPolicy,
             })
           : undefined;
-        let failedSessionTranscriptMissing = false;
-        if (entry?.status === "failed" && entry.sessionId?.trim()) {
+        const resolveFailedSessionTranscriptMissingForEntry = (
+          candidateEntry: SessionEntry | undefined,
+        ) => {
+          if (candidateEntry?.status !== "failed" || !candidateEntry.sessionId?.trim()) {
+            return false;
+          }
           try {
             const sessionPathOpts = resolveSessionFilePathOptions({
               storePath,
               agentId: canonicalSessionAgentId,
             });
-            failedSessionTranscriptMissing = !existsSync(
-              resolveSessionFilePath(entry.sessionId, entry, sessionPathOpts),
+            return !existsSync(
+              resolveSessionFilePath(candidateEntry.sessionId, candidateEntry, sessionPathOpts),
             );
           } catch {
-            failedSessionTranscriptMissing = true;
+            return true;
           }
-        }
+        };
+        const failedSessionTranscriptMissing = resolveFailedSessionTranscriptMissingForEntry(entry);
+        const mainSessionKeyForRequest = resolveAgentMainSessionKey({
+          cfg: cfgLocal,
+          agentId: canonicalSessionAgentId,
+        });
+        const isSystemGatewayRun =
+          request.bootstrapContextRunKind === "cron" ||
+          request.bootstrapContextRunKind === "heartbeat";
+        const requestedSessionMatchesEntry = Boolean(
+          requestedSessionId && entry?.sessionId?.trim() === requestedSessionId,
+        );
+        const terminalMainTranscriptCheck =
+          isSystemGatewayRun || requestedSessionMatchesEntry
+            ? undefined
+            : resolveTerminalMainSessionTranscriptRegistryCheck({
+                entry,
+                sessionScope: cfgLocal.session?.scope,
+                sessionKey: canonicalKey,
+                agentId: canonicalSessionAgentId,
+                mainKey: cfgLocal.session?.mainKey,
+                storePath,
+              });
+        const terminalMainTranscriptNewerThanRegistry = terminalMainTranscriptCheck
+          ? hasTerminalMainSessionTranscriptNewerThanRegistrySync({
+              entry,
+              sessionScope: cfgLocal.session?.scope,
+              sessionKey: canonicalKey,
+              agentId: canonicalSessionAgentId,
+              mainKey: cfgLocal.session?.mainKey,
+              storePath,
+            })
+          : false;
         const canReuseSession =
           Boolean(entry?.sessionId) &&
           (freshness?.fresh ?? false) &&
-          !failedSessionTranscriptMissing;
-        const usableRequestedSessionId =
+          !failedSessionTranscriptMissing &&
+          !terminalMainTranscriptNewerThanRegistry;
+        let usableRequestedSessionId =
           requestedSessionId && (!entry?.sessionId || canReuseSession)
             ? requestedSessionId
             : undefined;
@@ -1612,11 +1759,8 @@ export const agentHandlers: GatewayRequestHandlers = {
           !entry ||
           (!canReuseSession && !usableRequestedSessionId) ||
           Boolean(usableRequestedSessionId && entry?.sessionId !== usableRequestedSessionId);
-        const rotatedSessionId = Boolean(entry?.sessionId && entry.sessionId !== sessionId);
-        const touchInteraction =
-          request.bootstrapContextRunKind !== "cron" &&
-          request.bootstrapContextRunKind !== "heartbeat" &&
-          !request.internalEvents?.length;
+        let rotatedSessionId = Boolean(entry?.sessionId && entry.sessionId !== sessionId);
+        const touchInteraction = !isSystemGatewayRun && !request.internalEvents?.length;
         const sessionAgent = canonicalSessionAgentId;
         type AgentSessionPatchBuild = {
           patch: Partial<SessionEntry>;
@@ -1625,6 +1769,10 @@ export const agentHandlers: GatewayRequestHandlers = {
           groupChannel: string | undefined;
           groupSpace: string | undefined;
           freshSessionRotatedSinceLoad: boolean;
+          isNewSession: boolean;
+          rotatedSessionId: boolean;
+          usableRequestedSessionId: string | undefined;
+          freshness: typeof freshness;
         };
         const requestDeliveryHint = normalizeDeliveryContext({
           channel: request.channel?.trim(),
@@ -1638,7 +1786,7 @@ export const agentHandlers: GatewayRequestHandlers = {
           freshEntry: SessionEntry | undefined,
         ): AgentSessionPatchBuild => {
           const freshSpawnedBy = canonicalizeSpawnedByForAgent(
-            cfg,
+            cfgLocal,
             sessionAgent,
             freshEntry?.spawnedBy,
           );
@@ -1717,12 +1865,69 @@ export const agentHandlers: GatewayRequestHandlers = {
           const freshSessionRotatedSinceLoad = Boolean(
             entry?.sessionId && freshEntry?.sessionId && freshEntry.sessionId !== entry.sessionId,
           );
-          const patchSessionId = freshSessionRotatedSinceLoad ? freshEntry?.sessionId : sessionId;
-          const shouldClearRotatedState = rotatedSessionId && !freshSessionRotatedSinceLoad;
+          const freshLifecycleTimestamps = freshEntry
+            ? resolveSessionLifecycleTimestamps({
+                entry: freshEntry,
+                storePath,
+                agentId: sessionAgent,
+              })
+            : undefined;
+          const freshFreshness = freshEntry
+            ? evaluateSessionFreshness({
+                updatedAt: freshEntry.updatedAt,
+                ...freshLifecycleTimestamps,
+                now,
+                policy: resetPolicy,
+              })
+            : undefined;
+          const freshRequestedSessionMatchesEntry = Boolean(
+            requestedSessionId && freshEntry?.sessionId?.trim() === requestedSessionId,
+          );
+          const freshTerminalMainTranscriptNewerThanRegistry =
+            isSystemGatewayRun || freshRequestedSessionMatchesEntry
+              ? false
+              : hasTerminalMainSessionTranscriptNewerThanRegistrySync({
+                  entry: freshEntry,
+                  sessionScope: cfgLocal.session?.scope,
+                  sessionKey: canonicalKey,
+                  agentId: sessionAgent,
+                  mainKey: cfgLocal.session?.mainKey,
+                  storePath,
+                });
+          const freshFailedSessionTranscriptMissing =
+            resolveFailedSessionTranscriptMissingForEntry(freshEntry);
+          const freshCanReuseSession =
+            Boolean(freshEntry?.sessionId) &&
+            (freshFreshness?.fresh ?? false) &&
+            !freshFailedSessionTranscriptMissing &&
+            !freshTerminalMainTranscriptNewerThanRegistry;
+          const freshUsableRequestedSessionId =
+            requestedSessionId && (!freshEntry?.sessionId || freshCanReuseSession)
+              ? requestedSessionId
+              : undefined;
+          const freshSessionId = freshUsableRequestedSessionId
+            ? freshUsableRequestedSessionId
+            : ((freshCanReuseSession ? freshEntry?.sessionId : undefined) ?? sessionId);
+          const freshIsNewSession =
+            !freshEntry ||
+            (!freshCanReuseSession && !freshUsableRequestedSessionId) ||
+            Boolean(
+              freshUsableRequestedSessionId &&
+              freshEntry?.sessionId !== freshUsableRequestedSessionId,
+            );
+          const freshRotatedSessionId = Boolean(
+            freshEntry?.sessionId && freshEntry.sessionId !== freshSessionId,
+          );
+          const patchSessionId = freshSessionRotatedSinceLoad
+            ? freshEntry?.sessionId
+            : freshSessionId;
+          const shouldClearRotatedState = freshRotatedSessionId && !freshSessionRotatedSinceLoad;
           const patch: Partial<SessionEntry> = {
             sessionId: patchSessionId,
             updatedAt: now,
-            ...(isNewSession && !freshSessionRotatedSinceLoad ? { sessionStartedAt: now } : {}),
+            ...(freshIsNewSession && !freshSessionRotatedSinceLoad
+              ? { sessionStartedAt: now }
+              : {}),
             ...(touchInteraction ? { lastInteractionAt: now } : {}),
             ...(effectiveDeliveryFields.route ? { route: effectiveDeliveryFields.route } : {}),
             ...(effectiveDeliveryFields.deliveryContext
@@ -1756,6 +1961,9 @@ export const agentHandlers: GatewayRequestHandlers = {
                 }
               : {}),
           };
+          if (shouldClearRotatedState) {
+            clearAllCliSessions(patch);
+          }
           return {
             patch,
             spawnedBy: freshSpawnedBy,
@@ -1763,16 +1971,24 @@ export const agentHandlers: GatewayRequestHandlers = {
             groupChannel: nextGroup.groupChannel,
             groupSpace: nextGroup.groupSpace,
             freshSessionRotatedSinceLoad,
+            isNewSession: freshIsNewSession,
+            rotatedSessionId: freshRotatedSessionId,
+            usableRequestedSessionId: freshUsableRequestedSessionId,
+            freshness: freshFreshness,
           };
         };
         let patchBuild = buildSessionPatch(entry);
+        isNewSession = patchBuild.isNewSession;
+        rotatedSessionId = patchBuild.rotatedSessionId;
+        usableRequestedSessionId = patchBuild.usableRequestedSessionId;
+        freshness = patchBuild.freshness;
         sessionEntry = mergeSessionEntry(entry, patchBuild.patch);
         resolvedSessionId = sessionEntry?.sessionId ?? sessionId;
         const canonicalSessionKey = canonicalKey;
         resolvedSessionKey = canonicalSessionKey;
         const sessionAgentId = canonicalSessionAgentId;
         resolvedSessionAgentId = sessionAgentId;
-        const mainSessionKey = resolveAgentMainSessionKey({ cfg, agentId: sessionAgentId });
+        const mainSessionKey = mainSessionKeyForRequest;
         // Legacy stores may lack sessionStartedAt entirely. Pre-compute a
         // JSONL-transcript-derived candidate outside the store lock; the
         // updater below only writes it when the freshly-loaded store still
@@ -1800,7 +2016,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             (store) => {
               const storeKeysBeforeMigration = new Set(Object.keys(store));
               const preMigrationTarget = resolveGatewaySessionStoreTarget({
-                cfg,
+                cfg: cfgLocal,
                 key: requestedStoreKey,
                 store,
                 ...(sessionAgentId ? { agentId: sessionAgentId } : {}),
@@ -1810,7 +2026,7 @@ export const agentHandlers: GatewayRequestHandlers = {
                   storeKey !== preMigrationTarget.canonicalKey && Object.hasOwn(store, storeKey),
               );
               const { target, primaryKey } = migrateAndPruneGatewaySessionStoreKey({
-                cfg,
+                cfg: cfgLocal,
                 key: requestedStoreKey,
                 store,
               });
@@ -1829,7 +2045,7 @@ export const agentHandlers: GatewayRequestHandlers = {
               const sendPolicy =
                 request.deliver === true
                   ? resolveSendPolicy({
-                      cfg,
+                      cfg: cfgLocal,
                       entry: merged,
                       sessionKey: canonicalKey,
                       channel: merged?.channel,
@@ -1871,6 +2087,10 @@ export const agentHandlers: GatewayRequestHandlers = {
             return;
           }
         }
+        isNewSession = patchBuild.isNewSession;
+        rotatedSessionId = patchBuild.rotatedSessionId;
+        usableRequestedSessionId = patchBuild.usableRequestedSessionId;
+        freshness = patchBuild.freshness;
         spawnedByValue = patchBuild.spawnedBy;
         resolvedGroupId = patchBuild.groupId;
         resolvedGroupChannel = patchBuild.groupChannel;
@@ -1884,7 +2104,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         ) {
           const previousSessionId = rotatedSessionId ? entry?.sessionId : undefined;
           const sessionLifecycleTransition: AgentSendSessionLifecycleTransition = {
-            cfg,
+            cfg: cfgLocal,
             sessionKey: canonicalSessionKey,
             sessionId: resolvedSessionId,
             storePath,
@@ -1903,7 +2123,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         }
         if (request.deliver === true) {
           const sendPolicy = resolveSendPolicy({
-            cfg,
+            cfg: cfgLocal,
             entry: sessionEntry,
             sessionKey: canonicalKey,
             channel: sessionEntry?.channel,
@@ -2145,6 +2365,7 @@ export const agentHandlers: GatewayRequestHandlers = {
         ownerDeviceId,
         providerId: activeModelProvider,
         authProviderId: activeAuthProvider,
+        controlUiVisible: !suppressVisibleSessionEffects,
         kind: "agent",
       });
       const existingRunAbort = context.chatAbortControllers.get(runId);
@@ -2157,6 +2378,39 @@ export const agentHandlers: GatewayRequestHandlers = {
         return;
       }
 
+      const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
+      const taskTrackingMode = resolveGatewayAgentTaskTrackingMode({
+        client,
+        sessionKey: resolvedSessionKey,
+        inputProvenance,
+      });
+      let dispatchTaskTrackingMode: Exclude<GatewayAgentTaskTrackingMode, "plugin_subagent"> =
+        taskTrackingMode === "cli" ? "cli" : "none";
+      if (taskTrackingMode === "plugin_subagent" && resolvedSessionKey) {
+        try {
+          await registerPluginSubagentRunFromGateway({
+            cfg,
+            runId,
+            childSessionKey: resolvedSessionKey,
+            task: request.message.trim(),
+            requesterOrigin: normalizeDeliveryContext({
+              channel: resolvedChannel,
+              to: resolvedTo,
+              accountId: resolvedAccountId,
+              threadId: resolvedThreadId,
+            }),
+            pluginId: normalizeOptionalString(client?.internal?.pluginRuntimeOwnerId),
+          });
+        } catch (err) {
+          context.logGateway.warn(
+            `failed to register plugin subagent run ${runId}; falling back to cli task tracking: ${formatForLog(
+              err,
+            )}`,
+          );
+          dispatchTaskTrackingMode = "cli";
+        }
+      }
+
       const accepted = {
         runId,
         sessionKey: resolvedSessionKey,
@@ -2166,6 +2420,7 @@ export const agentHandlers: GatewayRequestHandlers = {
       };
       const acceptedDedupePayload = {
         ...accepted,
+        controlUiVisible: !suppressVisibleSessionEffects,
         dedupeKeys: agentDedupeKeys,
         ownerConnId,
         ownerDeviceId,
@@ -2242,7 +2497,6 @@ export const agentHandlers: GatewayRequestHandlers = {
             message = annotateInterSessionPromptText(message, inputProvenance);
           }
 
-          const resolvedThreadId = explicitThreadId ?? deliveryPlan.resolvedThreadId;
           const ingressAgentId =
             resolvedSessionKey === "global"
               ? activeSessionAgentId
@@ -2360,6 +2614,7 @@ export const agentHandlers: GatewayRequestHandlers = {
             abortController: activeRunAbort.controller,
             respond,
             context,
+            taskTrackingMode: dispatchTaskTrackingMode,
           });
           dispatched = true;
         } catch (err) {

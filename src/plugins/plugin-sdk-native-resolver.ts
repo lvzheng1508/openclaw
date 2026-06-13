@@ -1,8 +1,13 @@
+/** Installs native Node resolution aliases so plugins can import the OpenClaw SDK in dev and tests. */
 import fs from "node:fs";
 import Module from "node:module";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { buildPluginLoaderAliasMap, type PluginSdkResolutionPreference } from "./sdk-alias.js";
+import {
+  buildPluginLoaderAliasMap,
+  listWorkspacePackageExportAliasEntries,
+  type PluginSdkResolutionPreference,
+} from "./sdk-alias.js";
 
 type ResolveFilename = (
   request: string,
@@ -32,6 +37,7 @@ type NativeAliasEntry = {
   target: string;
 };
 
+/** Resolver install options for CJS `_resolveFilename` and modern ESM loader hooks. */
 export type InstallOpenClawPluginSdkNativeResolverOptions = {
   modulePath?: string;
   pluginModulePath?: string;
@@ -72,16 +78,6 @@ const INTERNAL_CORE_PACKAGE_ALIASES = [
       ["mime", "mime.ts"],
       ["read-byte-stream-with-limit", "read-byte-stream-with-limit.ts"],
       ["read-response-with-limit", "read-response-with-limit.ts"],
-    ],
-  },
-  {
-    packageName: "@openclaw/acp-core",
-    packageDir: "acp-core",
-    subpaths: [
-      ["", "index.ts"],
-      ["normalize-text", "normalize-text.ts"],
-      ["record-shared", "record-shared.ts"],
-      ["runtime/types", path.join("runtime", "types.ts")],
     ],
   },
   {
@@ -296,7 +292,19 @@ function listInternalCorePackageNativeAliases(
     target: string;
     parentRoots: string[];
   }> = [];
-  for (const entry of INTERNAL_CORE_PACKAGE_ALIASES) {
+  const internalCorePackageAliases = [
+    ...INTERNAL_CORE_PACKAGE_ALIASES,
+    {
+      packageName: "@openclaw/acp-core",
+      packageDir: "acp-core",
+      subpaths: listWorkspacePackageExportAliasEntries({
+        packageRoot,
+        packageName: "@openclaw/acp-core",
+        packageDir: "acp-core",
+      }).map((entry) => [entry.subpath, entry.srcFile] as const),
+    },
+  ];
+  for (const entry of internalCorePackageAliases) {
     for (const [subpath, srcFile] of entry.subpaths) {
       const request = subpath ? `${entry.packageName}/${subpath}` : entry.packageName;
       const target = path.join(packageRoot, "packages", entry.packageDir, "src", srcFile);

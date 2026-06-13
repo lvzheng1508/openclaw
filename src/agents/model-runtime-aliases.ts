@@ -1,3 +1,6 @@
+/**
+ * Resolves CLI runtime aliases to provider/model auth labels and execution ids.
+ */
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeOptionalLowercaseString } from "@openclaw/normalization-core/string-coerce";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -5,6 +8,7 @@ import {
   isCliRuntimeModelBackendForProvider,
   listCliRuntimeModelBackendBindings,
   listCliRuntimeProviderIds,
+  resolveCliRuntimeCanonicalProvider,
   resolveCliRuntimeModelBackendBinding,
 } from "./cli-backends.js";
 import { resolveModelRuntimePolicy } from "./model-runtime-policy.js";
@@ -53,14 +57,14 @@ function canonicalizeRuntimeAliasProvider(
   provider: string,
   options: RuntimeAliasComparisonOptions = {},
 ): string {
-  const normalized = normalizeProviderId(provider);
   return (
-    listCliRuntimeModelBackendBindings({
+    resolveCliRuntimeCanonicalProvider({
+      runtime: provider,
       config: options.config,
       env: options.env,
       includeSetupRegistry:
         options.includeSetupRegistry ?? (options.config !== undefined || options.env !== undefined),
-    }).find((binding) => binding.runtime === normalized)?.provider ?? provider
+    }) ?? provider
   );
 }
 
@@ -81,11 +85,26 @@ function normalizeRuntimeModelRefForComparison(
   return model ? `${canonicalProvider}/${model}` : canonicalProvider;
 }
 
+function normalizeRuntimeModelRefWithoutAlias(raw: string): string {
+  const trimmed = raw.trim();
+  const slash = trimmed.indexOf("/");
+  if (slash <= 0 || slash >= trimmed.length - 1) {
+    return normalizeProviderId(trimmed);
+  }
+  const provider = trimmed.slice(0, slash).trim();
+  const model = trimmed.slice(slash + 1).trim();
+  const normalizedProvider = normalizeProviderId(provider);
+  return model ? `${normalizedProvider}/${model}` : normalizedProvider;
+}
+
 export function areRuntimeModelRefsEquivalent(
   left: string,
   right: string,
   options: RuntimeAliasComparisonOptions = {},
 ): boolean {
+  if (normalizeRuntimeModelRefWithoutAlias(left) === normalizeRuntimeModelRefWithoutAlias(right)) {
+    return true;
+  }
   return (
     normalizeRuntimeModelRefForComparison(left, options) ===
     normalizeRuntimeModelRefForComparison(right, options)

@@ -1,3 +1,4 @@
+// Qa Lab tests cover bus server plugin behavior.
 import { Agent, createServer, request } from "node:http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeQaHttpServer, handleQaBusRequest, startQaBusServer } from "./bus-server.js";
@@ -97,7 +98,7 @@ describe("qa-bus server", () => {
   it("wakes stale-cursor long polls as soon as matching account traffic arrives", async () => {
     const state = createQaBusState();
     const bus = await startQaBusServer({ state });
-    stops.push(bus.stop);
+    stops.push(bus["stop"]);
 
     const pending = pollQaBus({
       baseUrl: bus.baseUrl,

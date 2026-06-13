@@ -1,10 +1,11 @@
+// Cron service job tests cover job creation, updates, and runtime scheduling.
 import { describe, expect, it } from "vitest";
 import {
   applyJobPatch,
   createJob,
+  nextWakeAtMs,
   recomputeNextRuns,
   recomputeNextRunsForMaintenance,
-  resolveJobPayloadTextForMain,
 } from "./service/jobs.js";
 import type { CronServiceState } from "./service/state.js";
 import { DEFAULT_TOP_OF_HOUR_STAGGER_MS } from "./stagger.js";
@@ -368,6 +369,50 @@ describe("applyJobPatch", () => {
     }
   });
 
+  it("clears agentTurn payload.model when patch requests null", () => {
+    const job = createIsolatedAgentTurnJob("job-model-clear", {
+      mode: "announce",
+      channel: "telegram",
+    });
+    job.payload = {
+      kind: "agentTurn",
+      message: "do it",
+      model: "openai/gpt-5.5",
+    };
+
+    applyJobPatch(job, {
+      payload: {
+        kind: "agentTurn",
+        model: null,
+      },
+    });
+
+    expect(job.payload.kind).toBe("agentTurn");
+    if (job.payload.kind === "agentTurn") {
+      expect(job.payload.message).toBe("do it");
+      expect(job.payload.model).toBeUndefined();
+    }
+  });
+
+  it("omits null model when patch builds a replacement agentTurn payload", () => {
+    const job = createMainSystemEventJob("job-model-replace", { mode: "none" });
+
+    applyJobPatch(job, {
+      sessionTarget: "isolated",
+      payload: {
+        kind: "agentTurn",
+        message: "do it",
+        model: null,
+      },
+    });
+
+    expect(job.payload.kind).toBe("agentTurn");
+    if (job.payload.kind === "agentTurn") {
+      expect(job.payload.message).toBe("do it");
+      expect(job.payload.model).toBeUndefined();
+    }
+  });
+
   it("applies payload.lightContext when replacing payload kind via patch", () => {
     const job = createIsolatedAgentTurnJob("job-light-context-switch", {
       mode: "announce",
@@ -647,6 +692,32 @@ describe("createJob rejects sessionTarget main for non-default agents", () => {
   });
 });
 
+describe("nextWakeAtMs", () => {
+  it("treats missing enabled like enabled so older persisted jobs still wake", () => {
+    const nextRunAtMs = Date.parse("2026-02-28T12:01:00.000Z");
+    const state = createMockState(Date.parse("2026-02-28T12:00:00.000Z"));
+    state.store = {
+      version: 1,
+      jobs: [
+        {
+          id: "legacy-missing-enabled",
+          name: "legacy missing enabled",
+          enabled: undefined as unknown as boolean,
+          createdAtMs: nextRunAtMs - 60_000,
+          updatedAtMs: nextRunAtMs - 60_000,
+          schedule: { kind: "at", at: new Date(nextRunAtMs).toISOString() },
+          sessionTarget: "main",
+          wakeMode: "now",
+          payload: { kind: "systemEvent", text: "wake" },
+          state: { nextRunAtMs },
+        },
+      ],
+    };
+
+    expect(nextWakeAtMs(state)).toBe(nextRunAtMs);
+  });
+});
+
 describe("applyJobPatch rejects sessionTarget main for non-default agents", () => {
   const now = Date.now();
 
@@ -836,29 +907,15 @@ describe("createJob delivery defaults", () => {
     });
     expect(job.delivery).toBeUndefined();
   });
-
-  it("uses legacy systemEvent message text without throwing", () => {
-    const state = createMockState(now, { defaultAgentId: "main" });
-    const job = createJob(state, {
-      name: "legacy system event",
-      enabled: true,
-      schedule: { kind: "every", everyMs: 60_000 },
-      sessionTarget: "main",
-      wakeMode: "now",
-      payload: { kind: "systemEvent", message: "legacy text" } as never,
-    });
-
-    expect(resolveJobPayloadTextForMain(job)).toBe("legacy text");
-  });
 });
 
 describe("recomputeNextRuns", () => {
-  it("backfills missing every anchorMs for legacy loaded jobs", () => {
+  it("backfills missing every anchorMs for loaded jobs", () => {
     const now = Date.parse("2026-03-01T12:00:00.000Z");
     const createdAtMs = now - 120_000;
     const job: CronJob = {
-      id: "legacy-every",
-      name: "legacy-every",
+      id: "loaded-every",
+      name: "loaded-every",
       enabled: true,
       createdAtMs,
       updatedAtMs: createdAtMs,
@@ -878,7 +935,7 @@ describe("recomputeNextRuns", () => {
     if (job.schedule.kind === "every") {
       expect(job.schedule.anchorMs).toBe(createdAtMs);
     }
-    expect(job.state.nextRunAtMs).toBe(now);
+    expect(job.state.nextRunAtMs).toBe(now + 60_000);
   });
 
   it("keeps recovered recurring error retries behind run-end backoff", () => {

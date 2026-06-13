@@ -1,3 +1,4 @@
+// Builds plugin metadata snapshots for gateway and diagnostics.
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
@@ -14,7 +15,7 @@ import { getCurrentPluginMetadataSnapshot } from "./current-plugin-metadata-snap
 import { resolveDefaultPluginNpmDir, resolvePluginNpmProjectsDir } from "./install-paths.js";
 import { hashJson } from "./installed-plugin-index-hash.js";
 import { resolveInstalledPluginIndexPolicyHash } from "./installed-plugin-index-policy.js";
-import { resolveInstalledPluginIndexStorePath } from "./installed-plugin-index-store-path.js";
+import { readPersistedInstalledPluginIndexSync } from "./installed-plugin-index-store.js";
 import type { InstalledPluginIndex } from "./installed-plugin-index.js";
 import {
   loadPluginManifestRegistryForInstalledIndex,
@@ -111,15 +112,6 @@ function directoryChildPackageJsonFingerprint(directoryPath: string): unknown {
   ];
 }
 
-function readJsonObject(filePath: string): Record<string, unknown> | undefined {
-  try {
-    const parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
-    return isRecord(parsed) ? parsed : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 function stableMemoValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(stableMemoValue);
@@ -207,15 +199,18 @@ function resolvePersistedRegistryFastMemoFingerprint(params: {
   if (disabled) {
     return { disabled: true };
   }
-  const indexPath = resolveInstalledPluginIndexStorePath({
-    env: params.env,
-    ...(params.stateDir ? { stateDir: params.stateDir } : {}),
-  });
   const npmRoot = params.stateDir
     ? path.join(params.stateDir, "npm")
     : resolveDefaultPluginNpmDir(params.env);
   return {
-    index: fileFingerprint(indexPath),
+    index: hashJson(
+      stableMemoValue(
+        readPersistedInstalledPluginIndexSync({
+          env: params.env,
+          ...(params.stateDir ? { stateDir: params.stateDir } : {}),
+        }),
+      ) ?? null,
+    ),
     npmPackageJson: fileFingerprint(path.join(npmRoot, "package.json")),
     npmProjectPackageJsons: directoryChildPackageJsonFingerprint(
       resolvePluginNpmProjectsDir(npmRoot),
@@ -251,7 +246,6 @@ function resolvePersistedRegistryMemoLookupContextHash(params: {
 
 function resolvePersistedRegistryMemoState(params: {
   env: NodeJS.ProcessEnv;
-  index?: InstalledPluginIndex;
   preferPersisted?: boolean;
   stateDir?: string;
 }): PersistedRegistryMemoState {
@@ -268,11 +262,10 @@ function resolvePersistedRegistryMemoState(params: {
       fingerprint: fastFingerprint,
     };
   }
-  const indexPath = resolveInstalledPluginIndexStorePath({
+  const index = readPersistedInstalledPluginIndexSync({
     env: params.env,
     ...(params.stateDir ? { stateDir: params.stateDir } : {}),
   });
-  const index = params.index ?? readJsonObject(indexPath);
   return {
     contextHash,
     fastHash,
@@ -621,19 +614,11 @@ export function loadPluginMetadataSnapshot(
   );
   const snapshot = freezePluginMetadataSnapshot(result.snapshot);
   if (canMemoizePluginMetadataSnapshotResult(result)) {
-    const cachedRegistryState =
-      result.registrySource === "derived"
-        ? resolvePersistedRegistryMemoState({
-            env,
-            index: snapshot.index,
-            ...(params.stateDir ? { stateDir: resolveUserPath(params.stateDir, env) } : {}),
-            ...(params.preferPersisted !== undefined
-              ? { preferPersisted: params.preferPersisted }
-              : {}),
-          })
-        : registryState;
+    // Store under the exact key this call looked up by. Derived registries used
+    // to re-key off the freshly built snapshot.index, so the store key never
+    // matched the next lookup and every call re-ran the full manifest scan.
     rememberPluginMetadataSnapshotMemo({
-      key: computePluginMetadataSnapshotMemoKey({ params, registryState: cachedRegistryState }),
+      key: memoKey,
       lookupContextHash: resolvePersistedRegistryMemoLookupContextHash({
         env,
         ...(params.stateDir ? { stateDir: resolveUserPath(params.stateDir, env) } : {}),
@@ -641,7 +626,7 @@ export function loadPluginMetadataSnapshot(
           ? { preferPersisted: params.preferPersisted }
           : {}),
       }),
-      registryState: cachedRegistryState,
+      registryState,
       snapshot,
     });
   }

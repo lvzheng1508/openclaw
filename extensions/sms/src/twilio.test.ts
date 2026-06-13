@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+// Sms tests cover twilio plugin behavior.
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildTwilioInboundMessage,
   computeTwilioSignature,
@@ -12,6 +13,16 @@ import {
   verifyTwilioSignature,
 } from "./twilio.js";
 import type { ResolvedSmsAccount } from "./types.js";
+
+const fetchWithSsrFGuardMock = vi.hoisted(() => vi.fn());
+
+vi.mock("openclaw/plugin-sdk/ssrf-runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("openclaw/plugin-sdk/ssrf-runtime")>();
+  return {
+    ...actual,
+    fetchWithSsrFGuard: (...args: unknown[]) => fetchWithSsrFGuardMock(...args),
+  };
+});
 
 function createAccount(overrides: Partial<ResolvedSmsAccount> = {}): ResolvedSmsAccount {
   return {
@@ -43,6 +54,10 @@ function readUrlEncodedRequestBody(init: RequestInit | undefined): URLSearchPara
 }
 
 describe("Twilio SMS helpers", () => {
+  afterEach(() => {
+    fetchWithSsrFGuardMock.mockReset();
+  });
+
   it("parses Twilio form bodies and inbound messages", () => {
     const form = parseTwilioFormBody(
       "From=%2B15551234567&To=%2B15557654321&Body=hello+there&MessageSid=SM123",
@@ -162,17 +177,8 @@ describe("Twilio SMS helpers", () => {
       status: "queued",
     });
 
-    const firstFetchCall = fetchImpl.mock.calls[0];
-    expect(firstFetchCall).toBeDefined();
-    if (!firstFetchCall) {
-      throw new Error("Expected Twilio fetch call");
-    }
-    const [url, init] = firstFetchCall;
+    const [url, init] = fetchImpl.mock.calls[0] ?? [];
     expect(url).toBe("https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json");
-    expect(init).toBeDefined();
-    if (!init) {
-      throw new Error("Expected Twilio request init");
-    }
     expect(init?.method).toBe("POST");
     expect(init?.headers).toMatchObject({
       authorization: `Basic ${Buffer.from("AC123:secret").toString("base64")}`,
@@ -439,6 +445,33 @@ describe("Twilio SMS helpers", () => {
     ).rejects.toThrow("Twilio SMS send failed (503): upstream unavailable");
   });
 
+  it("releases guarded Twilio egress on failed send responses", async () => {
+    const release = vi.fn(async () => {});
+    fetchWithSsrFGuardMock.mockResolvedValue({
+      response: new Response("upstream unavailable", { status: 503 }),
+      release,
+    });
+
+    await expect(
+      sendSmsViaTwilio({
+        account: createAccount(),
+        to: "+15551234567",
+        text: "hello",
+      }),
+    ).rejects.toThrow("Twilio SMS send failed (503): upstream unavailable");
+
+    expect(fetchWithSsrFGuardMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auditContext: "sms-twilio-api",
+        policy: { allowedHostnames: ["api.twilio.com"] },
+        requireHttps: true,
+        timeoutMs: 30_000,
+        url: "https://api.twilio.com/2010-04-01/Accounts/AC123/Messages.json",
+      }),
+    );
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
   it("rejects malformed JSON from successful Twilio sends", async () => {
     const fetchImpl = vi.fn<typeof fetch>(async () => new Response("not json", { status: 201 }));
 
@@ -450,6 +483,24 @@ describe("Twilio SMS helpers", () => {
         fetchImpl,
       }),
     ).rejects.toThrow("Twilio SMS send returned malformed JSON.");
+  });
+
+  it("releases guarded Twilio egress on malformed successful send responses", async () => {
+    const release = vi.fn(async () => {});
+    fetchWithSsrFGuardMock.mockResolvedValue({
+      response: new Response("not json", { status: 201 }),
+      release,
+    });
+
+    await expect(
+      sendSmsViaTwilio({
+        account: createAccount(),
+        to: "+15551234567",
+        text: "hello",
+      }),
+    ).rejects.toThrow("Twilio SMS send returned malformed JSON.");
+
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it("exposes a typed Twilio SMS API error", () => {

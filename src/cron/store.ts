@@ -1,3 +1,4 @@
+/** Public cron store load/save API backed by SQLite plus quarantine sidecars. */
 import fs from "node:fs";
 import path from "node:path";
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
@@ -10,9 +11,9 @@ import {
 } from "../state/openclaw-state-db.js";
 import { resolveConfigDir } from "../utils.js";
 import { parseJsonWithJson5Fallback } from "../utils/parse-json-compat.js";
+import { cronStoreKey } from "./store/key.js";
 import {
   assertCronStoreCanPersist,
-  cronStoreKey,
   loadedCronStoreFromRows,
   loadCronRows,
   replaceCronRows,
@@ -39,6 +40,7 @@ function resolveDefaultCronStorePath(): string {
   return path.join(resolveDefaultCronDir(), "jobs.json");
 }
 
+/** Resolves the sidecar quarantine path used for invalid cron config rows. */
 export function resolveCronQuarantinePath(storePath: string): string {
   if (storePath.endsWith(".json")) {
     return storePath.replace(/\.json$/, "-quarantine.json");
@@ -46,7 +48,8 @@ export function resolveCronQuarantinePath(storePath: string): string {
   return `${storePath}-quarantine.json`;
 }
 
-export function resolveCronStorePath(storePath?: string) {
+/** Resolves the cron jobs store path, expanding home-relative user input. */
+export function resolveCronJobsStorePath(storePath?: string) {
   if (storePath?.trim()) {
     const raw = storePath.trim();
     if (raw.startsWith("~")) {
@@ -57,7 +60,8 @@ export function resolveCronStorePath(storePath?: string) {
   return resolveDefaultCronStorePath();
 }
 
-export async function loadCronStoreWithConfigJobs(storePath: string): Promise<LoadedCronStore> {
+/** Loads cron jobs plus config/runtime sidecars from the SQLite-backed store. */
+export async function loadCronJobsStoreWithConfigJobs(storePath: string): Promise<LoadedCronStore> {
   const resolvedStorePath = path.resolve(storePath);
   const storeKey = cronStoreKey(resolvedStorePath);
   const database = openOpenClawStateDatabase().db;
@@ -74,11 +78,13 @@ export async function loadCronStoreWithConfigJobs(storePath: string): Promise<Lo
   };
 }
 
-export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
-  return (await loadCronStoreWithConfigJobs(storePath)).store;
+/** Loads only the persisted cron job store payload. */
+export async function loadCronJobsStore(storePath: string): Promise<CronStoreFile> {
+  return (await loadCronJobsStoreWithConfigJobs(storePath)).store;
 }
 
-export function loadCronStoreSync(storePath: string): CronStoreFile {
+/** Synchronously loads only the persisted cron job store payload. */
+export function loadCronJobsStoreSync(storePath: string): CronStoreFile {
   const resolvedStorePath = path.resolve(storePath);
   const storeKey = cronStoreKey(resolvedStorePath);
   const database = openOpenClawStateDatabase().db;
@@ -105,7 +111,8 @@ async function atomicWrite(filePath: string, content: string, dirMode = 0o700): 
   });
 }
 
-export async function saveCronStore(
+/** Persists cron jobs, or only mutable runtime state when stateOnly is set. */
+export async function saveCronJobsStore(
   storePath: string,
   store: CronStoreFile,
   opts?: SaveCronStoreOptions,
@@ -113,6 +120,8 @@ export async function saveCronStore(
   const resolvedStorePath = path.resolve(storePath);
   const storeKey = cronStoreKey(resolvedStorePath);
   if (opts?.stateOnly) {
+    // Hot-path timer updates only mutate runtime columns; full config JSON stays
+    // untouched so user-authored cron definitions do not churn.
     runOpenClawStateWriteTransaction(({ db }) => {
       updateCronRuntimeRows(db, storeKey, store);
     });
@@ -124,12 +133,38 @@ export async function saveCronStore(
   });
 }
 
-export async function loadCronQuarantineFile(path: string): Promise<CronQuarantineFile> {
+// Public plugin SDK seam; core callers use the SQLite-backed cron-jobs names above.
+/** Resolves the public plugin-SDK cron store path. */
+export function resolveCronStorePath(storePath?: string) {
+  return resolveCronJobsStorePath(storePath);
+}
+
+/** Plugin-SDK alias for loading the cron store. */
+export async function loadCronStore(storePath: string): Promise<CronStoreFile> {
+  return await loadCronJobsStore(storePath);
+}
+
+/** Plugin-SDK alias for synchronously loading the cron store. */
+export function loadCronStoreSync(storePath: string): CronStoreFile {
+  return loadCronJobsStoreSync(storePath);
+}
+
+/** Plugin-SDK alias for saving the cron store. */
+export async function saveCronStore(
+  storePath: string,
+  store: CronStoreFile,
+  opts?: SaveCronStoreOptions,
+) {
+  await saveCronJobsStore(storePath, store, opts);
+}
+
+/** Loads the cron quarantine sidecar, validating its persisted v1 shape. */
+export async function loadCronQuarantineFile(pathLocal: string): Promise<CronQuarantineFile> {
   try {
-    const raw = await fs.promises.readFile(path, "utf-8");
+    const raw = await fs.promises.readFile(pathLocal, "utf-8");
     const parsed = parseJsonWithJson5Fallback(raw);
     if (!isRecord(parsed) || parsed.version !== 1 || !Array.isArray(parsed.jobs)) {
-      throw new Error(`Unsupported cron quarantine file shape at ${path}`);
+      throw new Error(`Unsupported cron quarantine file shape at ${pathLocal}`);
     }
     const jobs = parsed.jobs.map((entry, index) => {
       if (
@@ -137,7 +172,7 @@ export async function loadCronQuarantineFile(path: string): Promise<CronQuaranti
         typeof entry.reason !== "string" ||
         (!isRecord(entry.job) && !("raw" in entry))
       ) {
-        throw new Error(`Unsupported cron quarantine entry at ${path} index ${index}`);
+        throw new Error(`Unsupported cron quarantine entry at ${pathLocal} index ${index}`);
       }
       const sourceIndex = typeof entry.sourceIndex === "number" ? entry.sourceIndex : -1;
       const quarantinedAtMs =
@@ -191,6 +226,7 @@ function quarantineEntryKey(entry: QuarantinedCronConfigJob): string {
   });
 }
 
+/** Appends new invalid cron config rows to the quarantine sidecar without duplicating entries. */
 export async function saveCronQuarantineFile(params: {
   storePath: string;
   entries: QuarantinedCronConfigJob[];
@@ -209,6 +245,8 @@ export async function saveCronQuarantineFile(params: {
     if (seen.has(key)) {
       continue;
     }
+    // Deduplicate by the original invalid row shape so repeated loads do not
+    // keep appending the same quarantined config job.
     seen.add(key);
     appended = true;
     nextJobs.push({

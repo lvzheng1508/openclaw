@@ -1,3 +1,4 @@
+// Webchat reply media path normalizer for display-safe outbound payloads.
 import { isPassThroughRemoteMediaSource } from "@openclaw/media-core/media-source-url";
 import { isAudioFileName } from "@openclaw/media-core/mime";
 import { resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
@@ -20,9 +21,11 @@ function shouldPreserveDisplayMediaUrl(payload: ReplyPayload, mediaUrl: string):
   if (isPassThroughRemoteMediaSource(mediaUrl)) {
     return true;
   }
+  // Local audio is preserved only after the producer marks it as already trust-scoped.
   return payload.trustedLocalMedia === true;
 }
 
+/** Normalize reply media paths for webchat display without leaking sensitive media. */
 export async function normalizeWebchatReplyMediaPathsForDisplay(params: {
   cfg: OpenClawConfig;
   sessionKey: string;
@@ -48,6 +51,7 @@ export async function normalizeWebchatReplyMediaPathsForDisplay(params: {
   const normalized: ReplyPayload[] = [];
   for (const payload of params.payloads) {
     if (payload.sensitiveMedia === true) {
+      // Suppressed media must not be copied into managed outbound storage for display.
       normalized.push(payload);
       continue;
     }

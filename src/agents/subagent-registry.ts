@@ -1,3 +1,8 @@
+/**
+ * Subagent registry coordinator.
+ *
+ * Owns registration, lifecycle, delivery retry, steering, orphan recovery, persistence, and cleanup for child runs.
+ */
 import type { cleanupBrowserSessionsForLifecycleEnd } from "../browser-lifecycle-cleanup.js";
 import { getRuntimeConfig } from "../config/config.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
@@ -11,6 +16,12 @@ import { createLazyImportLoader, createLazyPromiseLoader } from "../shared/lazy-
 import { importRuntimeModule } from "../shared/runtime-import.js";
 import { normalizeDeliveryContext } from "../utils/delivery-context.shared.js";
 import type { DeliveryContext } from "../utils/delivery-context.types.js";
+import {
+  ackLeasedAgentSteeringItemsFromSubagentRuns,
+  leasePendingAgentSteeringItemsFromSubagentRuns,
+  prependAgentSteeringPrompt,
+  releaseLeasedAgentSteeringItemsFromSubagentRuns,
+} from "./agent-steering-queue.js";
 import { removeInternalSessionEffectsTranscript } from "./internal-session-effects.js";
 import { isAbortedAgentStopReason } from "./run-termination.js";
 import type { ensureRuntimePluginsLoaded as ensureRuntimePluginsLoadedFn } from "./runtime-plugins.js";
@@ -23,12 +34,6 @@ import {
   getDeliveryLastError,
   isDeliverySuspended,
 } from "./subagent-delivery-state.js";
-import {
-  ackLeasedSubagentHandoffsFromRuns,
-  leasePendingSubagentHandoffsFromRuns,
-  prependSubagentHandoffPrompt,
-  releaseLeasedSubagentHandoffsFromRuns,
-} from "./subagent-handoff-queue.js";
 import {
   SUBAGENT_ENDED_REASON_COMPLETE,
   SUBAGENT_ENDED_REASON_ERROR,
@@ -69,6 +74,7 @@ import {
   type RegisterSubagentRunParams,
 } from "./subagent-registry-run-manager.js";
 import {
+  clearSubagentRunsReadCacheForTest,
   getSubagentRunsSnapshotForRead,
   persistSubagentRunsToDisk,
   persistSubagentRunsToDiskOrThrow,
@@ -474,7 +480,7 @@ function schedulePendingLifecycleTimeout(params: {
     if (!entry) {
       return;
     }
-    if (entry.outcome?.status === "ok") {
+    if (entry.outcome?.status === "ok" || entry.pauseReason === "sessions_yield") {
       return;
     }
     const completionParams = {
@@ -1100,6 +1106,25 @@ function ensureListener() {
         });
         return;
       }
+      // sessions_yield ends the turn by aborting the run signal, so a yielded
+      // terminal can also look aborted. An explicit yield is authoritative — pause,
+      // don't kill — else the tracking task settles `cancelled` with a false notice (#92448).
+      if (evt.data?.yielded === true) {
+        // Drop any grace timer from an earlier aborted/error terminal so it can't
+        // later fire and settle this now-paused run with a false notice.
+        clearPendingLifecycleError(evt.runId);
+        clearPendingLifecycleTimeout(evt.runId);
+        if (
+          markSubagentRunPausedAfterYield({
+            entry,
+            endedAt,
+            startedAt: startedAt ?? entry.startedAt,
+          })
+        ) {
+          persistSubagentRuns();
+        }
+        return;
+      }
       if (isAbortedAgentStopReason(stopReason)) {
         clearPendingLifecycleError(evt.runId);
         clearPendingLifecycleTimeout(evt.runId);
@@ -1148,18 +1173,6 @@ function ensureListener() {
         });
         return;
       }
-      if (evt.data?.yielded === true) {
-        if (
-          markSubagentRunPausedAfterYield({
-            entry,
-            endedAt,
-            startedAt: startedAt ?? entry.startedAt,
-          })
-        ) {
-          persistSubagentRuns();
-        }
-        return;
-      }
       clearPendingLifecycleError(evt.runId);
       clearPendingLifecycleTimeout(evt.runId);
       const completionParams = {
@@ -1173,7 +1186,7 @@ function ensureListener() {
         startedAt,
       };
       await completeSubagentRunWithRecovery(completionParams, "lifecycle-ok-event");
-    })().catch((err) => {
+    })().catch((err: unknown) => {
       log.warn("lifecycle event handler failed", { err, runId: evt.runId });
     });
   });
@@ -1197,6 +1210,7 @@ const subagentRunManager = createSubagentRunManager({
   stopSweeper,
   resumeSubagentRun,
   clearPendingLifecycleError,
+  clearPendingLifecycleTimeout,
   resolveSubagentWaitTimeoutMs,
   scheduleOrphanRecovery: (args) => scheduleSubagentOrphanRecovery(args),
   resolveSubagentSessionCompletion,
@@ -1250,6 +1264,7 @@ export function resetSubagentRegistryForTests(opts?: { persist?: boolean }) {
   runtimePluginsLoader.clear();
   subagentAnnounceLoader.clear();
   browserCleanupLoader.clear();
+  clearSubagentRunsReadCacheForTest();
   stopSweeper();
   sweepInProgress = false;
   restoreAttempted = false;
@@ -1381,13 +1396,13 @@ export function listSubagentRunsForRequester(
   return listRunsForRequesterFromRuns(subagentRuns, requesterSessionKey, options);
 }
 
-export function leasePendingSubagentCompletionHandoffs(params: {
+export function leasePendingAgentSteeringItems(params: {
   requesterSessionKey: string;
   leaseId: string;
   now?: number;
 }) {
   restoreSubagentRunsOnce();
-  const leased = leasePendingSubagentHandoffsFromRuns({
+  const leased = leasePendingAgentSteeringItemsFromSubagentRuns({
     runs: subagentRuns,
     requesterSessionKey: params.requesterSessionKey,
     leaseId: params.leaseId,
@@ -1399,12 +1414,12 @@ export function leasePendingSubagentCompletionHandoffs(params: {
   return leased;
 }
 
-export function ackPendingSubagentCompletionHandoffs(params: {
+export function ackPendingAgentSteeringItems(params: {
   runIds: readonly string[];
   leaseId: string;
   now?: number;
 }): number {
-  const updated = ackLeasedSubagentHandoffsFromRuns({
+  const updated = ackLeasedAgentSteeringItemsFromSubagentRuns({
     runs: subagentRuns,
     runIds: params.runIds,
     leaseId: params.leaseId,
@@ -1424,12 +1439,12 @@ export function ackPendingSubagentCompletionHandoffs(params: {
   return updated;
 }
 
-export function releasePendingSubagentCompletionHandoffs(params: {
+export function releasePendingAgentSteeringItems(params: {
   runIds: readonly string[];
   leaseId: string;
   error?: string;
 }): number {
-  const updated = releaseLeasedSubagentHandoffsFromRuns({
+  const updated = releaseLeasedAgentSteeringItemsFromSubagentRuns({
     runs: subagentRuns,
     runIds: params.runIds,
     leaseId: params.leaseId,
@@ -1441,7 +1456,7 @@ export function releasePendingSubagentCompletionHandoffs(params: {
   return updated;
 }
 
-export { prependSubagentHandoffPrompt };
+export { prependAgentSteeringPrompt };
 
 export function listSubagentRunsForController(controllerSessionKey: string): SubagentRunRecord[] {
   return listRunsForControllerFromRuns(

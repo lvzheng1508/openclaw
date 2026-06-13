@@ -1,3 +1,4 @@
+// Core runtime types define system, config, and task helper contracts for plugins.
 import type { HeartbeatRunResult } from "../../infra/heartbeat-wake.js";
 import type { LogLevel } from "../../logging/levels.js";
 import type { MediaUnderstandingRuntime } from "../../media-understanding/runtime-types.js";
@@ -314,6 +315,16 @@ export type PluginRuntimeCore = {
     openSyncKeyedStore: <T>(
       options: import("../../plugin-state/plugin-state-store.types.js").OpenKeyedStoreOptions,
     ) => import("../../plugin-state/plugin-state-store.types.js").PluginStateSyncKeyedStore<T>;
+    openChannelIngressQueue: <TPayload, TMetadata = unknown, TCompletedMetadata = unknown>(
+      options?: Omit<
+        import("../../channels/message/ingress-queue.js").CreateChannelIngressQueueOptions,
+        "channelId"
+      >,
+    ) => import("../../channels/message/ingress-queue.js").ChannelIngressQueue<
+      TPayload,
+      TMetadata,
+      TCompletedMetadata
+    >;
   };
   tasks: {
     runs: PluginRuntimeTaskRuns;

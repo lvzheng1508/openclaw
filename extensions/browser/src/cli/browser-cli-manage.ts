@@ -1,3 +1,7 @@
+/**
+ * Browser CLI management commands for lifecycle, profiles, tabs, and doctor
+ * checks.
+ */
 import type { Command } from "commander";
 import { runCommandWithRuntime } from "../core-api.js";
 import {
@@ -148,9 +152,27 @@ function formatDoctorLine(check: BrowserDoctorCheck): string {
   return `${check.ok ? "OK" : "FAIL"} ${check.name}${check.detail ? `: ${check.detail}` : ""}`;
 }
 
+function isGatewaySecretRefUnavailableErrorShape(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const errorRecord = error as Error & { code?: unknown };
+  return (
+    errorRecord.name === "GatewaySecretRefUnavailableError" ||
+    errorRecord.code === "GATEWAY_SECRET_REF_UNAVAILABLE"
+  );
+}
+
+function formatBrowserDoctorGatewayError(error: unknown): string {
+  if (!isGatewaySecretRefUnavailableErrorShape(error)) {
+    return String(error);
+  }
+  return "Gateway auth SecretRef is unavailable in this command path; browser doctor cannot reach the admin-scoped browser.request endpoint. Set OPENCLAW_GATEWAY_TOKEN or OPENCLAW_GATEWAY_PASSWORD, then retry.";
+}
+
 async function runBrowserDoctor(parent: BrowserParentOpts, profile?: string, deep?: boolean) {
   const checks: BrowserDoctorCheck[] = [];
-  let status: BrowserStatus | null = null;
+  let status: BrowserStatus | null;
 
   try {
     status = await fetchBrowserStatus(parent, profile);
@@ -163,7 +185,7 @@ async function runBrowserDoctor(parent: BrowserParentOpts, profile?: string, dee
     checks.push({
       name: "gateway",
       ok: false,
-      detail: String(err),
+      detail: formatBrowserDoctorGatewayError(err),
     });
     return { ok: false, checks };
   }
@@ -286,6 +308,9 @@ function formatBrowserConnectionSummary(params: {
   userDataDir?: string | null;
 }): string {
   if (usesChromeMcpTransport(params)) {
+    if (params.cdpUrl) {
+      return `transport: chrome-mcp, cdpUrl: ${redactCdpUrl(params.cdpUrl)}`;
+    }
     const userDataDir = params.userDataDir ? shortenHomePath(params.userDataDir) : null;
     return userDataDir
       ? `transport: chrome-mcp, userDataDir: ${userDataDir}`
@@ -297,6 +322,7 @@ function formatBrowserConnectionSummary(params: {
   return `port: ${params.cdpPort ?? "(unset)"}`;
 }
 
+/** Registers Browser lifecycle, profile, tab, and doctor commands. */
 export function registerBrowserManageCommands(
   browser: Command,
   parentOpts: (cmd: Command) => BrowserParentOpts,
@@ -326,9 +352,11 @@ export function registerBrowserManageCommands(
                   `cdpPort: ${status.cdpPort ?? "(unset)"}`,
                   `cdpUrl: ${redactCdpUrl(status.cdpUrl ?? `http://127.0.0.1:${status.cdpPort}`)}`,
                 ]
-              : status.userDataDir
-                ? [`userDataDir: ${shortenHomePath(status.userDataDir)}`]
-                : []),
+              : status.cdpUrl
+                ? [`cdpUrl: ${redactCdpUrl(status.cdpUrl)}`]
+                : status.userDataDir
+                  ? [`userDataDir: ${shortenHomePath(status.userDataDir)}`]
+                  : []),
             `browser: ${status.chosenBrowser ?? "unknown"}`,
             `detectedBrowser: ${status.detectedBrowser ?? "unknown"}`,
             `detectedPath: ${detectedDisplay}`,
@@ -495,8 +523,10 @@ export function registerBrowserManageCommands(
         if (printJsonResult(parent, result)) {
           return;
         }
-        const tab = (result as { tab?: BrowserTab }).tab;
-        defaultRuntime.log(`labeled tab ${tab?.tabId ?? targetId} as ${tab?.label ?? label}`);
+        const tabValue = (result as { tab?: BrowserTab }).tab;
+        defaultRuntime.log(
+          `labeled tab ${tabValue?.tabId ?? targetId} as ${tabValue?.label ?? label}`,
+        );
       });
     });
 
@@ -555,7 +585,7 @@ export function registerBrowserManageCommands(
       const parent = parentOpts(cmd);
       const profile = parent?.browserProfile;
       await runBrowserCommand(async () => {
-        const tab = await callBrowserRequest<BrowserTab>(
+        const tabLocal = await callBrowserRequest<BrowserTab>(
           parent,
           {
             method: "POST",
@@ -565,11 +595,11 @@ export function registerBrowserManageCommands(
           },
           { timeoutMs: BROWSER_MANAGE_REQUEST_TIMEOUT_MS },
         );
-        if (printJsonResult(parent, tab)) {
+        if (printJsonResult(parent, tabLocal)) {
           return;
         }
         defaultRuntime.log(
-          `opened: ${tab.url}\n${tab.tabId ? `tab: ${tab.tabId}\n` : ""}${tab.label ? `label: ${tab.label}\n` : ""}id: ${tab.targetId}`,
+          `opened: ${tabLocal.url}\n${tabLocal.tabId ? `tab: ${tabLocal.tabId}\n` : ""}${tabLocal.label ? `label: ${tabLocal.label}\n` : ""}id: ${tabLocal.targetId}`,
         );
       });
     });
@@ -680,7 +710,7 @@ export function registerBrowserManageCommands(
     .description("Create a new browser profile")
     .requiredOption("--name <name>", "Profile name (lowercase, numbers, hyphens)")
     .option("--color <hex>", "Profile color (hex format, e.g. #0066CC)")
-    .option("--cdp-url <url>", "CDP URL for remote Chrome (http/https)")
+    .option("--cdp-url <url>", "DevTools endpoint URL (http/https/ws/wss)")
     .option("--user-data-dir <path>", "User data dir for existing-session Chromium attach")
     .option("--driver <driver>", "Profile driver (openclaw|existing-session). Default: openclaw")
     .action(

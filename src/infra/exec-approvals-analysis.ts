@@ -1,3 +1,4 @@
+// Parses shell commands into exec approval analysis segments.
 import { normalizeLowercaseStringOrEmpty } from "@openclaw/normalization-core/string-coerce";
 import { splitShellArgs } from "../utils/shell-argv.js";
 import {
@@ -409,8 +410,6 @@ function splitShellPipeline(command: string): { ok: boolean; reason?: string; se
       }
     } else if (line === current.delimiter) {
       pendingHeredocs.shift();
-      unquotedHeredocLogicalChunks = [];
-      unquotedHeredocLogicalLength = 0;
       if (pendingHeredocs.length === 0) {
         inHeredocBody = false;
       }

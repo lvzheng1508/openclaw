@@ -1,3 +1,4 @@
+// Copilot tests cover hooks bridge plugin behavior.
 import { describe, expect, it, vi } from "vitest";
 import { createHooksBridge, type CopilotHooksConfig } from "./hooks-bridge.js";
 
@@ -70,7 +71,7 @@ describe("createHooksBridge", () => {
       hookName: "onPostToolUse",
       error: expect.any(Error),
     });
-    expect((onHookError.mock.calls[0]?.[0]?.error as Error).message).toBe("post boom");
+    expect((onHookError.mock.calls[0][0]!.error as Error).message).toBe("post boom");
   });
 
   it("isolates async rejections: returns undefined and notifies onHookError", async () => {

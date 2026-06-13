@@ -1,3 +1,4 @@
+/** Loads and normalizes OpenClaw plugin manifests, including contracts and config schemas. */
 import fs from "node:fs";
 import path from "node:path";
 import { normalizeModelCatalog } from "@openclaw/model-catalog-core/model-catalog-normalize";
@@ -32,6 +33,7 @@ import type { PluginConfigUiHint } from "./manifest-types.js";
 import { createPluginCacheKey, PluginLruCache } from "./plugin-cache-primitives.js";
 import type { PluginKind } from "./plugin-kind.types.js";
 
+/** Canonical plugin manifest filename inside plugin roots. */
 export const PLUGIN_MANIFEST_FILENAME = "openclaw.plugin.json";
 export const PLUGIN_MANIFEST_FILENAMES = [PLUGIN_MANIFEST_FILENAME] as const;
 export const MAX_PLUGIN_MANIFEST_BYTES = 256 * 1024;
@@ -54,6 +56,7 @@ const pluginManifestLoadCache = new PluginLruCache<PluginManifestLoadCacheEntry>
   MAX_PLUGIN_MANIFEST_LOAD_CACHE_ENTRIES,
 );
 
+/** Clears process-local manifest parse cache for tests and explicit refresh flows. */
 export function clearPluginManifestLoadCache(): void {
   pluginManifestLoadCache.clear();
 }
@@ -421,6 +424,7 @@ export type PluginManifest = {
 export type PluginManifestContracts = {
   embeddedExtensionFactories?: string[];
   agentToolResultMiddleware?: string[];
+  trustedToolPolicies?: string[];
   /**
    * Provider ids whose external auth profile hook can contribute runtime-only
    * credentials. Declaring this lets auth-store overlays load only the owning
@@ -575,11 +579,11 @@ function normalizeStringRecord(value: unknown): Record<string, string> | undefin
   const normalized: Record<string, string> = Object.create(null);
   for (const [rawKey, rawValue] of Object.entries(value)) {
     const key = normalizeOptionalString(rawKey) ?? "";
-    const value = normalizeOptionalString(rawValue) ?? "";
-    if (!key || isBlockedObjectKey(key) || !value) {
+    const valueLocal = normalizeOptionalString(rawValue) ?? "";
+    if (!key || isBlockedObjectKey(key) || !valueLocal) {
       continue;
     }
-    normalized[key] = value;
+    normalized[key] = valueLocal;
   }
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
@@ -742,12 +746,12 @@ function normalizeCapabilityProviderModeConfigSignal(
   if (!isRecord(value)) {
     return undefined;
   }
-  const path = normalizeOptionalString(value.path);
+  const pathResult = normalizeOptionalString(value.path);
   const defaultValue = normalizeOptionalString(value.default);
   const allowed = normalizeTrimmedStringList(value.allowed);
   const disallowed = normalizeTrimmedStringList(value.disallowed);
   const signal = {
-    ...(path ? { path } : {}),
+    ...(pathResult ? { path: pathResult } : {}),
     ...(defaultValue ? { default: defaultValue } : {}),
     ...(allowed.length > 0 ? { allowed } : {}),
     ...(disallowed.length > 0 ? { disallowed } : {}),
@@ -859,6 +863,7 @@ function normalizeManifestContracts(value: unknown): PluginManifestContracts | u
 
   const embeddedExtensionFactories = normalizeTrimmedStringList(value.embeddedExtensionFactories);
   const agentToolResultMiddleware = normalizeTrimmedStringList(value.agentToolResultMiddleware);
+  const trustedToolPolicies = normalizeTrimmedStringList(value.trustedToolPolicies);
   const externalAuthProviders = normalizeTrimmedStringList(value.externalAuthProviders);
   const embeddingProviders = normalizeTrimmedStringList(value.embeddingProviders);
   const memoryEmbeddingProviders = normalizeTrimmedStringList(value.memoryEmbeddingProviders);
@@ -882,6 +887,7 @@ function normalizeManifestContracts(value: unknown): PluginManifestContracts | u
   const contracts = {
     ...(embeddedExtensionFactories.length > 0 ? { embeddedExtensionFactories } : {}),
     ...(agentToolResultMiddleware.length > 0 ? { agentToolResultMiddleware } : {}),
+    ...(trustedToolPolicies.length > 0 ? { trustedToolPolicies } : {}),
     ...(externalAuthProviders.length > 0 ? { externalAuthProviders } : {}),
     ...(embeddingProviders.length > 0 ? { embeddingProviders } : {}),
     ...(memoryEmbeddingProviders.length > 0 ? { memoryEmbeddingProviders } : {}),
@@ -925,11 +931,11 @@ function normalizeManifestDangerousConfigFlags(
     if (!isRecord(entry)) {
       continue;
     }
-    const path = normalizeOptionalString(entry.path) ?? "";
-    if (!path || !isManifestConfigLiteral(entry.equals)) {
+    const pathValue = normalizeOptionalString(entry.path) ?? "";
+    if (!pathValue || !isManifestConfigLiteral(entry.equals)) {
       continue;
     }
-    normalized.push({ path, equals: entry.equals });
+    normalized.push({ path: pathValue, equals: entry.equals });
   }
   return normalized.length > 0 ? normalized : undefined;
 }
@@ -945,13 +951,13 @@ function normalizeManifestSecretInputPaths(
     if (!isRecord(entry)) {
       continue;
     }
-    const path = normalizeOptionalString(entry.path) ?? "";
-    if (!path) {
+    const pathLocal = normalizeOptionalString(entry.path) ?? "";
+    if (!pathLocal) {
       continue;
     }
     const expected = entry.expected === "string" ? entry.expected : undefined;
     normalized.push({
-      path,
+      path: pathLocal,
       ...(expected ? { expected } : {}),
     });
   }

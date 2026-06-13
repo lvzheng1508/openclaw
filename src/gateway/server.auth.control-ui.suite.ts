@@ -1,3 +1,5 @@
+// Control UI auth suite covers trusted-proxy, pairing, device identity, and
+// operator/node role checks for browser-facing gateway connections.
 import os from "node:os";
 import path from "node:path";
 import { beforeAll, expect, test, vi } from "vitest";
@@ -582,7 +584,9 @@ export function registerControlUiAndPairingSuite(): void {
           ws,
           (o) => o.type === "event" && o.event === "connect.challenge",
         );
-        await new Promise<void>((resolve) => ws.once("open", resolve));
+        await new Promise<void>((resolve) => {
+          ws.once("open", resolve);
+        });
         const challenge = await challengePromise;
         const nonce = (challenge.payload as { nonce?: unknown } | undefined)?.nonce;
         expect(typeof nonce).toBe("string");
@@ -1617,7 +1621,9 @@ export function registerControlUiAndPairingSuite(): void {
         socket,
         (o) => o.type === "event" && o.event === "connect.challenge",
       );
-      await new Promise<void>((resolve) => socket.once("open", resolve));
+      await new Promise<void>((resolve) => {
+        socket.once("open", resolve);
+      });
       const challenge = await challengePromise;
       const nonce = (challenge.payload as { nonce?: unknown } | undefined)?.nonce;
       expect(typeof nonce).toBe("string");

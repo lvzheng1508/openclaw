@@ -1,3 +1,4 @@
+// Resolves media paths from reply payloads into runtime attachment metadata.
 import path from "node:path";
 import { isPassThroughRemoteMediaSource } from "@openclaw/media-core/media-source-url";
 import { resolveSendableOutboundReplyParts } from "openclaw/plugin-sdk/reply-payload";
@@ -129,7 +130,7 @@ export function createReplyMediaPathNormalizer(params: {
       mediaAccess: resolveMediaAccessForSource(media),
     })
       .then((saved) => saved.path)
-      .catch((err) => {
+      .catch((err: unknown) => {
         persistedMediaBySource.delete(media);
         throw err;
       });

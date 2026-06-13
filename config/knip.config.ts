@@ -1,3 +1,6 @@
+/**
+ * Knip configuration for OpenClaw root and bundled plugin dependency hygiene.
+ */
 const BUNDLED_PLUGIN_ROOT_DIR = "extensions";
 
 function bundledPluginFile(pluginId: string, relativePath: string, suffix = ""): string {
@@ -158,7 +161,15 @@ const config = {
       ],
     },
     ui: {
-      entry: ["index.html!", "src/main.ts!", "vite.config.ts!", "vitest*.ts!"],
+      entry: [
+        "index.html!",
+        "src/main.ts!",
+        "src/ui/browser-redact.ts!",
+        "vite.config.ts!",
+        "vitest*.ts!",
+      ],
+      // Workboard lazy-loads Three.js at runtime; Knip's dependency pass misses it.
+      ignoreDependencies: ["three"],
       project: ["src/**/*.{ts,tsx}!"],
     },
     "packages/sdk": {
@@ -205,6 +216,16 @@ const config = {
     "packages/*": {
       entry: ["index.js!", "scripts/postinstall.js!"],
       project: ["index.js!", "scripts/**/*.js!"],
+    },
+    [`${BUNDLED_PLUGIN_ROOT_DIR}/llama-cpp`]: {
+      entry: bundledPluginEntries,
+      project: ["index.ts!", "src/**/*.{js,mjs,ts}!"],
+      ignoreDependencies: [
+        // The provider resolves node-llama-cpp from its own package at runtime
+        // so local embeddings use the plugin-owned native dependency.
+        "node-llama-cpp",
+        ...bundledPluginIgnoredRuntimeDependencies,
+      ],
     },
     [`${BUNDLED_PLUGIN_ROOT_DIR}/*`]: {
       // Bundled plugins often load their public surface via string specifiers in

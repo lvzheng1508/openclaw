@@ -1,3 +1,4 @@
+// Memory Core plugin module implements manager embedding policy behavior.
 import { formatErrorMessage } from "openclaw/plugin-sdk/error-runtime";
 
 type MemoryEmbeddingTextPart = {
@@ -124,22 +125,29 @@ export async function runMemoryEmbeddingRetryLoop<T>(params: {
   waitForRetry: (delayMs: number) => Promise<void>;
   maxAttempts: number;
   baseDelayMs: number;
+  /** Caller-owned cancellation; an aborted caller stops the retry loop. */
+  signal?: AbortSignal;
 }): Promise<T> {
-  let attempt = 1;
-  let delayMs = params.baseDelayMs;
-  while (true) {
+  const attempts = Math.max(1, params.maxAttempts);
+  for (const attempt of Array.from({ length: attempts }, (_, index) => index + 1)) {
+    const delayMs = params.baseDelayMs * 2 ** (attempt - 1);
     try {
       return await params.run();
     } catch (err) {
+      // Abort must win over retryable-looking failures: abort reasons often
+      // carry "timed out" messages that match the retryable transport
+      // patterns and would otherwise keep retrying for an absent caller.
+      if (params.signal?.aborted) {
+        throw err;
+      }
       const message = formatErrorMessage(err);
       if (!params.isRetryable(message) || attempt >= params.maxAttempts) {
         throw err;
       }
       await params.waitForRetry(delayMs);
-      delayMs *= 2;
-      attempt += 1;
     }
   }
+  throw new Error("retry loop exhausted");
 }
 
 export async function runMemoryEmbeddingBatchRetryWithSplit<TInput, TOutput>(params: {

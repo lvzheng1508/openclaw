@@ -1,7 +1,8 @@
+// Covers model auth resolution across env, profiles, CLI, and provider aliases.
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { Api, Model } from "openclaw/plugin-sdk/llm";
+import type { Model } from "openclaw/plugin-sdk/llm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { withEnvAsync } from "../test-utils/env.js";
@@ -29,6 +30,8 @@ async function expectVertexAdcEnvApiKey(params: {
   env?: NodeJS.ProcessEnv;
   tempPrefix?: string;
 }) {
+  // Vertex ADC credentials are file evidence, not a raw API key. Tests create
+  // a temporary credentials file and expect the non-secret marker to win.
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), params.tempPrefix ?? "openclaw-adc-"));
   const credentialsPath = path.join(tempDir, "adc.json");
   await fs.writeFile(credentialsPath, params.credentialsJson, "utf8");
@@ -111,6 +114,8 @@ vi.mock("./provider-auth-aliases.js", () => ({
 }));
 
 vi.mock("./model-auth-env-vars.js", () => {
+  // Workspace-provided auth evidence is only trusted when the plugin is in the
+  // effective allowlist, mirroring runtime plugin scoping.
   const hasAllowedPlugin = (config: unknown, pluginId: string): boolean => {
     if (!config || typeof config !== "object") {
       return false;
@@ -648,9 +653,11 @@ describe("getApiKeyForModel", () => {
         },
       },
       async () => {
-        await expect(resolveApiKeyForProvider({ provider: "openai" })).rejects.toThrow(
-          'No API key found for provider "openai".',
-        );
+        await expect(resolveApiKeyForProvider({ provider: "openai" })).rejects.toMatchObject({
+          code: "missing-provider-auth",
+          message: expect.stringContaining('No API key found for provider "openai".'),
+          provider: "openai",
+        });
       },
     );
 

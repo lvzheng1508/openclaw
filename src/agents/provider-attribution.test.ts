@@ -1,6 +1,8 @@
+// Verifies provider attribution headers and endpoint classification policies.
 import { describe, expect, it, vi } from "vitest";
 
 function expectRecordFields(record: unknown, expected: Record<string, unknown>) {
+  // Policy helpers return broad records; assertions pin only the relevant fields.
   if (!record || typeof record !== "object") {
     throw new Error("Expected record");
   }
@@ -13,6 +15,7 @@ function expectRecordFields(record: unknown, expected: Record<string, unknown>) 
 
 const providerEndpointPlugins = vi.hoisted(() => [
   {
+    // Mirrors manifest-declared endpoint metadata without loading real plugins.
     providerEndpoints: [
       { endpointClass: "openai-public", hosts: ["api.openai.com"] },
       { endpointClass: "openai", hosts: ["chatgpt.com"] },
@@ -32,6 +35,16 @@ const providerEndpointPlugins = vi.hoisted(() => [
         endpointClass: "google-vertex",
         hosts: ["aiplatform.googleapis.com"],
         googleVertexRegion: "global",
+      },
+      {
+        endpointClass: "google-vertex",
+        hosts: ["aiplatform.eu.rep.googleapis.com"],
+        googleVertexRegion: "eu",
+      },
+      {
+        endpointClass: "google-vertex",
+        hosts: ["aiplatform.us.rep.googleapis.com"],
+        googleVertexRegion: "us",
       },
       {
         endpointClass: "google-vertex",
@@ -60,6 +73,15 @@ const providerEndpointPlugins = vi.hoisted(() => [
         hosts: ["integrate.api.nvidia.com"],
         baseUrls: ["https://integrate.api.nvidia.com/v1"],
       },
+      {
+        endpointClass: "xiaomi-native",
+        hosts: [
+          "api.xiaomimimo.com",
+          "token-plan-ams.xiaomimimo.com",
+          "token-plan-cn.xiaomimimo.com",
+          "token-plan-sgp.xiaomimimo.com",
+        ],
+      },
     ],
     providerRequest: {
       providers: {
@@ -77,6 +99,8 @@ const providerEndpointPlugins = vi.hoisted(() => [
         openrouter: { family: "openrouter" },
         qwen: { family: "modelstudio" },
         together: { family: "together" },
+        xiaomi: { family: "xiaomi" },
+        "xiaomi-token-plan": { family: "xiaomi" },
         xai: { family: "xai" },
         zai: { family: "zai" },
       },
@@ -89,6 +113,15 @@ vi.mock("../plugins/plugin-registry.js", () => ({
     plugins: providerEndpointPlugins,
     diagnostics: [],
   }),
+}));
+
+vi.mock("../plugins/manifest-metadata-scan.js", () => ({
+  listOpenClawPluginManifestMetadata: () =>
+    providerEndpointPlugins.map((manifest, index) => ({
+      pluginDir: `provider-endpoint-fixture-${index}`,
+      manifest,
+      origin: "bundled",
+    })),
 }));
 
 import {
@@ -239,6 +272,7 @@ describe("provider attribution", () => {
   });
 
   it("lists the current attribution support matrix", () => {
+    // Matrix order is user-facing evidence for docs/review summaries.
     expect(
       listProviderAttributionPolicies({ OPENCLAW_VERSION: "2026.3.22" }).map((policy) => [
         policy.provider,
@@ -725,6 +759,23 @@ describe("provider attribution", () => {
       endpointClass: "google-vertex",
       hostname: "aiplatform.googleapis.com",
       googleVertexRegion: "global",
+    });
+
+    expectRecordFields(resolveProviderEndpoint("https://aiplatform.eu.rep.googleapis.com"), {
+      endpointClass: "google-vertex",
+      hostname: "aiplatform.eu.rep.googleapis.com",
+      googleVertexRegion: "eu",
+    });
+
+    expectRecordFields(resolveProviderEndpoint("https://aiplatform.us.rep.googleapis.com"), {
+      endpointClass: "google-vertex",
+      hostname: "aiplatform.us.rep.googleapis.com",
+      googleVertexRegion: "us",
+    });
+
+    expectRecordFields(resolveProviderEndpoint("https://discoveryengine.eu.rep.googleapis.com"), {
+      endpointClass: "custom",
+      hostname: "discoveryengine.eu.rep.googleapis.com",
     });
 
     expectRecordFields(resolveProviderEndpoint("https://proxy.example.com/google"), {

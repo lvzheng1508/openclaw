@@ -1,3 +1,4 @@
+// Orchestrates reply agent execution, payload building, and delivery callbacks.
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
@@ -9,10 +10,13 @@ import {
 } from "../../agents/agent-scope.js";
 import { resolveContextTokensForModel } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
+import { hasVisibleAgentPayload } from "../../agents/embedded-agent-runner/delivery-evidence.js";
 import {
   formatEmbeddedAgentQueueFailureSummary,
   queueEmbeddedAgentMessageWithOutcomeAsync,
 } from "../../agents/embedded-agent-runner/runs.js";
+import { resolveFastModeState } from "../../agents/fast-mode.js";
+import { resolveAgentIdentity } from "../../agents/identity.js";
 import { resolveModelAuthMode } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { deriveContextPromptTokens, hasNonzeroUsage, normalizeUsage } from "../../agents/usage.js";
@@ -38,6 +42,7 @@ import {
 } from "../../infra/diagnostic-trace-context.js";
 import { measureDiagnosticsTimelineSpan } from "../../infra/diagnostics-timeline.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
+import type { PluginHookReplyUsageState } from "../../plugins/hook-types.js";
 import { CommandLaneClearedError, GatewayDrainingError } from "../../process/command-queue.js";
 import { shouldPreserveUserFacingSessionStateForInputProvenance } from "../../sessions/input-provenance.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
@@ -65,6 +70,9 @@ import type { OriginatingChannelType, TemplateContext } from "../templating.js";
 import { resolveResponseUsageMode, type VerboseLevel } from "../thinking.js";
 import { SILENT_REPLY_TOKEN } from "../tokens.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
+import { buildUsageContract } from "../usage-bar/contract.js";
+import { loadUsageBarTemplate } from "../usage-bar/template.js";
+import { renderUsageBar } from "../usage-bar/translator.js";
 import {
   buildKnownAgentRunFailureReplyPayload,
   runAgentTurnWithFallback,
@@ -87,6 +95,11 @@ import { appendUsageLine, formatResponseUsageLine } from "./agent-runner-usage-l
 import { resolveQueuedReplyExecutionConfig } from "./agent-runner-utils.js";
 import { createAudioAsVoiceBuffer, createBlockReplyPipeline } from "./block-reply-pipeline.js";
 import { resolveEffectiveBlockStreamingConfig } from "./block-streaming.js";
+import {
+  createCompactionNoticePayload,
+  shouldNotifyUserAboutCompaction,
+  type CompactionNoticePhase,
+} from "./compaction-notice.js";
 import { resolveEffectiveReplyRoute } from "./effective-reply-route.js";
 import { createFollowupRunner } from "./followup-runner.js";
 import { REPLY_RUN_STILL_SHUTTING_DOWN_TEXT } from "./get-reply-run-queue.js";
@@ -94,6 +107,10 @@ import { resolveOriginMessageProvider, resolveOriginMessageTo } from "./origin-r
 import { sanitizePendingFinalDeliveryText } from "./pending-final-delivery.js";
 import { drainPendingToolTasks } from "./pending-tool-task-drain.js";
 import { readPostCompactionContext } from "./post-compaction-context.js";
+import {
+  shouldWarnAboutPrivateMessageToolFinal,
+  warnPrivateMessageToolFinal,
+} from "./private-message-tool-final.js";
 import { resolveActiveRunQueueAction } from "./queue-policy.js";
 import {
   enqueueFollowupRun,
@@ -106,6 +123,7 @@ import { createReplyMediaContext } from "./reply-media-paths.js";
 import { replyRunRegistry, type ReplyOperation } from "./reply-run-registry.js";
 import { createReplyToModeFilterForChannel, resolveReplyToMode } from "./reply-threading.js";
 import { admitReplyTurn, resolveReplyTurnKind } from "./reply-turn-admission.js";
+import { recordReplyUsageState } from "./reply-usage-state.js";
 import { resolveRoutedDeliveryThreadId } from "./routed-delivery-thread.js";
 import { incrementRunCompactionCount, persistRunSessionUsage } from "./session-run-accounting.js";
 import { resolveSourceReplyVisibilityPolicy } from "./source-reply-delivery-mode.js";
@@ -232,13 +250,25 @@ function hasSuccessfulSideEffectDelivery(params: {
   didSendDeterministicApprovalPrompt?: boolean;
 }): boolean {
   return (
+    hasSuccessfulSourceReplyDelivery(params) ||
+    (params.successfulCronAdds ?? 0) > 0 ||
+    params.didSendDeterministicApprovalPrompt === true
+  );
+}
+
+function hasSuccessfulSourceReplyDelivery(params: {
+  blockReplyPipeline: { didStream: () => boolean; isAborted: () => boolean } | null;
+  directlySentBlockKeys?: Set<string>;
+  messagingToolSentTexts?: string[];
+  messagingToolSentMediaUrls?: string[];
+  messagingToolSentTargets?: unknown[];
+}): boolean {
+  return (
     (params.blockReplyPipeline?.didStream() && !params.blockReplyPipeline.isAborted()) ||
     (params.directlySentBlockKeys?.size ?? 0) > 0 ||
     hasNonEmptyStringArray(params.messagingToolSentTexts) ||
     hasNonEmptyStringArray(params.messagingToolSentMediaUrls) ||
-    hasCommittedMessagingTargetDeliveryEvidence(params.messagingToolSentTargets) ||
-    (params.successfulCronAdds ?? 0) > 0 ||
-    params.didSendDeterministicApprovalPrompt === true
+    hasCommittedMessagingTargetDeliveryEvidence(params.messagingToolSentTargets)
   );
 }
 
@@ -994,7 +1024,7 @@ function buildPendingFinalDeliveryText(payloads: ReplyPayload[]): string {
   const text = payloads
     .filter((payload) => payload.isReasoning !== true)
     .map((payload) => payload.text)
-    .filter((text): text is string => Boolean(text))
+    .filter((textLocal): textLocal is string => Boolean(textLocal))
     .join("\n\n");
   return sanitizePendingFinalDeliveryText(text);
 }
@@ -1316,6 +1346,24 @@ export async function runReplyAgent(params: {
     requesterSenderUsername: followupRun.run.senderUsername,
     requesterSenderE164: followupRun.run.senderE164,
   });
+  const compactionNoticeMessageId = sessionCtx.MessageSidFull ?? sessionCtx.MessageSid;
+  const sendDirectCompactionNotice = shouldNotifyUserAboutCompaction(cfg)
+    ? async (phase: CompactionNoticePhase) => {
+        if (!opts?.onBlockReply) {
+          return;
+        }
+        const noticePayload = createCompactionNoticePayload({
+          phase,
+          currentMessageId: compactionNoticeMessageId,
+          applyReplyToMode,
+        });
+        try {
+          await opts.onBlockReply(noticePayload);
+        } catch (err) {
+          logVerbose(`preflightCompaction notice delivery failed: ${String(err)}`);
+        }
+      }
+    : undefined;
   const blockReplyCoalescing =
     blockStreamingEnabled && opts?.onBlockReply
       ? resolveEffectiveBlockStreamingConfig({
@@ -1459,7 +1507,7 @@ export async function runReplyAgent(params: {
     }
   };
   const prePreflightCompactionCount = activeSessionEntry?.compactionCount ?? 0;
-  let preflightCompactionApplied = false;
+  let preflightCompactionApplied;
 
   try {
     await typingSignals.signalRunStart();
@@ -1478,6 +1526,7 @@ export async function runReplyAgent(params: {
         storePath,
         isHeartbeat,
         replyOperation,
+        onCompactionNotice: sendDirectCompactionNotice,
       }),
     );
     preflightCompactionApplied =
@@ -1645,6 +1694,7 @@ export async function runReplyAgent(params: {
       fallbackModel,
       fallbackAttempts,
       directlySentBlockKeys,
+      directlySentBlockPayloads,
     } = runOutcome;
     const { autoCompactionCount } = runOutcome;
     let { didLogHeartbeatStrip } = runOutcome;
@@ -1688,10 +1738,87 @@ export async function runReplyAgent(params: {
     }
 
     const usage = runResult.meta?.agentMeta?.usage;
+    const hasBillableUsageBuckets =
+      usage &&
+      (usage.input !== undefined ||
+        usage.output !== undefined ||
+        usage.cacheRead !== undefined ||
+        usage.cacheWrite !== undefined);
     const promptTokens = runResult.meta?.agentMeta?.promptTokens;
     const modelUsed = runResult.meta?.agentMeta?.model ?? fallbackModel ?? defaultModel;
     const providerUsed =
       runResult.meta?.agentMeta?.provider ?? fallbackProvider ?? followupRun.run.provider;
+
+    let replyUsageState: PluginHookReplyUsageState | undefined;
+    {
+      const winnerProvider = runResult.meta?.executionTrace?.winnerProvider ?? providerUsed;
+      const winnerModel = runResult.meta?.executionTrace?.winnerModel ?? modelUsed;
+      const ctxTokens = runResult.meta?.agentMeta?.contextTokens;
+      const compactions = runResult.meta?.agentMeta?.compactionCount;
+      const lastCallUsage = runResult.meta?.agentMeta?.lastCallUsage;
+      replyUsageState = {
+        provider: providerUsed,
+        model: modelUsed,
+        resolvedRef: winnerProvider && winnerModel ? `${winnerProvider}/${winnerModel}` : undefined,
+        reasoningEffort:
+          typeof followupRun.run.thinkLevel === "string" ? followupRun.run.thinkLevel : undefined,
+        fastMode: resolveFastModeState({
+          cfg,
+          provider: providerUsed ?? "",
+          model: modelUsed ?? "",
+          agentId: followupRun.run.agentId,
+          sessionEntry: activeSessionEntry,
+        }).enabled,
+        fallbackUsed: runResult.meta?.executionTrace?.fallbackUsed === true,
+        agentId: followupRun.run.agentId,
+        sessionId: followupRun.run.sessionId,
+        chatType: typeof sessionCtx.ChatType === "string" ? sessionCtx.ChatType : undefined,
+        authMode: runResult.meta?.requestShaping?.authMode ?? undefined,
+        overrideSource: activeSessionEntry?.modelOverrideSource ?? undefined,
+        requested:
+          followupRun.run.provider && followupRun.run.model
+            ? `${followupRun.run.provider}/${followupRun.run.model}`
+            : undefined,
+        turnUsd: hasBillableUsageBuckets
+          ? estimateUsageCost({
+              usage,
+              cost: resolveModelCostConfig({
+                provider: providerUsed,
+                model: modelUsed,
+                config: cfg,
+              }),
+            })
+          : undefined,
+        durationMs: Date.now() - runStartedAt,
+        identity: resolveAgentIdentity(cfg, followupRun.run.agentId),
+        compactionCount: typeof compactions === "number" ? compactions : undefined,
+        contextTokenBudget:
+          typeof ctxTokens === "number" && Number.isFinite(ctxTokens) ? ctxTokens : undefined,
+        contextUsedTokens:
+          typeof promptTokens === "number" && Number.isFinite(promptTokens)
+            ? promptTokens
+            : undefined,
+        usage: usage
+          ? {
+              input: usage.input,
+              output: usage.output,
+              cacheRead: usage.cacheRead,
+              cacheWrite: usage.cacheWrite,
+              total: usage.total,
+            }
+          : undefined,
+        lastUsage: lastCallUsage
+          ? {
+              input: lastCallUsage.input,
+              output: lastCallUsage.output,
+              cacheRead: lastCallUsage.cacheRead,
+              cacheWrite: lastCallUsage.cacheWrite,
+              total: lastCallUsage.total,
+            }
+          : undefined,
+      };
+      recordReplyUsageState(runId, replyUsageState);
+    }
     const verboseEnabled = resolvedVerboseLevel !== "off";
     const preserveUserFacingSessionState = shouldPreserveUserFacingSessionStateForInputProvenance(
       followupRun.run.inputProvenance,
@@ -1795,6 +1922,22 @@ export async function runReplyAgent(params: {
       successfulCronAdds: runResult.successfulCronAdds,
       didSendDeterministicApprovalPrompt: runResult.didSendDeterministicApprovalPrompt,
     });
+    const successfulSourceReplyDelivery = hasSuccessfulSourceReplyDelivery({
+      blockReplyPipeline,
+      directlySentBlockKeys,
+      messagingToolSentTexts: runResult.messagingToolSentTexts,
+      messagingToolSentMediaUrls: runResult.messagingToolSentMediaUrls,
+      messagingToolSentTargets: runResult.messagingToolSentTargets,
+    });
+    const committedMessagingToolSourceReplyDelivery =
+      runResult.didDeliverSourceReplyViaMessageTool === true ||
+      hasVisibleAgentPayload({ payloads: runResult.messagingToolSourceReplyPayloads });
+    if (
+      opts?.sourceReplyDeliveryMode === "message_tool_only" &&
+      committedMessagingToolSourceReplyDelivery
+    ) {
+      await opts.onObservedReplyDelivery?.();
+    }
     const returnSilentFallbackFailureIfNeeded = async (): Promise<ReplyPayload | undefined> => {
       const silentFallbackFailurePayload = buildSilentFallbackFailurePayload({
         fallbackTransition,
@@ -1901,6 +2044,7 @@ export async function runReplyAgent(params: {
       blockStreamingEnabled,
       blockReplyPipeline,
       directlySentBlockKeys,
+      directlySentBlockPayloads,
       replyToMode,
       replyToChannel,
       currentMessageId,
@@ -1992,7 +2136,9 @@ export async function runReplyAgent(params: {
         model: modelUsed,
         config: cfg,
       });
-      const costUsd = estimateUsageCost({ usage, cost: costConfig });
+      const costUsd = hasBillableUsageBuckets
+        ? estimateUsageCost({ usage, cost: costConfig })
+        : undefined;
       emitTrustedDiagnosticEvent({
         type: "model.usage",
         ...(runResult.diagnosticTrace
@@ -2043,7 +2189,16 @@ export async function runReplyAgent(params: {
         showCost,
         costConfig,
       });
-      if (formatted && responseUsageMode === "full" && sessionKey) {
+      const usageTemplate =
+        responseUsageMode === "full" && replyUsageState
+          ? loadUsageBarTemplate(cfg.messages?.usageTemplate)
+          : undefined;
+      const renderedUsageLine = usageTemplate
+        ? renderUsageBar(usageTemplate, buildUsageContract(replyUsageState, replyToChannel))
+        : undefined;
+      if (renderedUsageLine) {
+        formatted = renderedUsageLine;
+      } else if (formatted && responseUsageMode === "full" && sessionKey) {
         formatted = `${formatted} · session \`${sessionKey}\``;
       }
       if (formatted) {
@@ -2276,9 +2431,30 @@ export async function runReplyAgent(params: {
         runtimePolicySessionKey,
         opts,
       });
-      const pendingText = sourceReplyPolicy.suppressDelivery
-        ? ""
-        : buildPendingFinalDeliveryText(finalPayloads);
+      const finalDeliveryText = buildPendingFinalDeliveryText(finalPayloads);
+      // #85714: warn only for unusually substantive private final text. In
+      // message_tool_only, no tool call can be intentional silence, and
+      // finalDeliveryText also includes verbose/status/usage metadata.
+      const assistantFinalText = rawAssistantText ?? "";
+      if (
+        shouldWarnAboutPrivateMessageToolFinal({
+          sourceReplyDeliveryMode: sourceReplyPolicy.sourceReplyDeliveryMode,
+          sendPolicyDenied: sourceReplyPolicy.sendPolicyDenied,
+          successfulSourceReplyDelivery,
+          finalText: assistantFinalText,
+        })
+      ) {
+        warnPrivateMessageToolFinal({
+          sessionKey,
+          channel:
+            sessionCtx.OriginatingChannel ??
+            sessionCtx.Surface ??
+            sessionCtx.Provider ??
+            activeSessionEntry?.channel,
+          finalTextLength: assistantFinalText.trim().length,
+        });
+      }
+      const pendingText = sourceReplyPolicy.suppressDelivery ? "" : finalDeliveryText;
       const agentId = followupRun.run.agentId;
       const heartbeatAgentCfg = agentId ? resolveAgentConfig(cfg, agentId)?.heartbeat : undefined;
       const heartbeatAckMaxChars = Math.max(

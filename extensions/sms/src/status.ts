@@ -1,3 +1,4 @@
+// Sms plugin module implements status behavior.
 import {
   listTwilioIncomingPhoneNumbers,
   listTwilioMessages,
@@ -100,7 +101,7 @@ type ProbeOptions = {
 };
 
 function addTailscaleHint(account: ResolvedSmsAccount, hints: string[]): void {
-  let host = "";
+  let host;
   try {
     host = new URL(account.publicWebhookUrl).hostname;
   } catch {

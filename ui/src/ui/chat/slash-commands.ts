@@ -1,3 +1,4 @@
+// Control UI chat module implements slash commands behavior.
 import type {
   CommandEntry,
   CommandsListResult,
@@ -68,8 +69,6 @@ const COMMAND_ICON_OVERRIDES: Partial<Record<string, IconName>> = {
   compact: "loader",
   stop: "stop",
   clear: "trash",
-  focus: "eye",
-  unfocus: "eye",
   model: "brain",
   models: "brain",
   think: "brain",
@@ -87,7 +86,6 @@ const LOCAL_COMMANDS = new Set([
   "reset",
   "stop",
   "compact",
-  "focus",
   "model",
   "think",
   "fast",
@@ -139,8 +137,6 @@ const CATEGORY_OVERRIDES: Partial<Record<string, SlashCommandCategory>> = {
   reset: "session",
   new: "session",
   compact: "session",
-  focus: "session",
-  unfocus: "session",
   model: "model",
   models: "model",
   think: "model",
@@ -507,6 +503,28 @@ function loadRemoteSlashCommands(
     inFlight,
   });
   return inFlight;
+}
+
+export function applyRemoteSlashCommandsResult(params: {
+  client: GatewayBrowserClient | null;
+  agentId?: string | null;
+  result: CommandsListResult | null | undefined;
+}): boolean {
+  if (!Array.isArray(params.result?.commands)) {
+    return false;
+  }
+  const agentId = params.agentId?.trim();
+  const commands = buildSlashCommandsFromEntries(getRemoteCommandEntries(params.result));
+  if (params.client) {
+    const cache = getRemoteSlashCommandCache(params.client);
+    cache.set(remoteSlashCommandCacheKey(agentId), {
+      commands,
+      expiresAt: Date.now() + REMOTE_SLASH_COMMAND_CACHE_TTL_MS,
+    });
+  }
+  refreshSeq += 1;
+  replaceSlashCommands(commands);
+  return true;
 }
 
 export async function refreshSlashCommands(params: {
